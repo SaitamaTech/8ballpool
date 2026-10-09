@@ -79,6 +79,7 @@ export class PoolRenderer {
       if (cue) this.drawPrediction(ctx, cue, balls, aim.angle, L.scale, room);
     }
     for (const ball of balls) if (!ball.pocketed || (ball.dropProgress > 0 && ball.dropProgress < 1)) this.drawBall(ctx, ball);
+    if (room.challenge && room.status === 'playing') this.drawChallengeMarkers(ctx, room.challenge, balls, L.scale);
     if (aim && room.match?.status === 'playing' && !room.match?.shotInProgress) {
       const cue = balls.find(b => b.isCue && !b.pocketed);
       if (cue) this.drawCue(ctx, cue, aim.angle, aim.power || 0);
@@ -92,6 +93,19 @@ export class PoolRenderer {
       } else this.cueStrike = null;
     }
     this.drawEffects(ctx, L.scale);
+    ctx.restore();
+  }
+
+  drawChallengeMarkers(ctx, challenge, balls, scale) {
+    const target = balls.find(ball => ball.number === challenge.targetNumber && !ball.pocketed);
+    const pocket = challenge.targetPocket;
+    if (!target || !pocket) return;
+    const pulse = (Math.sin(performance.now() * .006) + 1) / 2;
+    ctx.save(); ctx.strokeStyle = '#f05cff'; ctx.shadowColor = '#57dcff'; ctx.shadowBlur = 14 / scale;
+    ctx.globalAlpha = .72 + pulse * .25; ctx.lineWidth = 2 / scale; ctx.setLineDash([6 / scale, 5 / scale]);
+    ctx.beginPath(); ctx.moveTo(target.x, target.y); ctx.lineTo(pocket.x, pocket.y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.lineWidth = 2.6 / scale; ctx.beginPath(); ctx.arc(target.x, target.y, target.radius + (7 + pulse * 3) / scale, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(pocket.x, pocket.y, pocket.radius + (8 + pulse * 4) / scale, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
   }
 

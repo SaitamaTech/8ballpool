@@ -20,12 +20,14 @@ function playSound(kind, volume) {
 
 app.innerHTML = `
   <div class="app-shell">
-    <div id="menu-screen" class="screen active"><div class="title-wrap"><p class="eyebrow">Multiplayer Pool</p><h1>8 Ball Pool</h1><p class="subtitle">Rack up. Aim true. Sink the eight.</p></div><div class="menu-grid"><button class="primary" data-action="computer">Play Computer</button><button class="secondary" data-action="host">Create Game</button><button class="secondary" data-action="join">Join Game</button><button class="secondary" data-action="settings">Settings</button><button class="secondary" data-action="howto">How to Play</button></div></div>
+    <div id="menu-screen" class="screen active"><div class="title-wrap"><p class="eyebrow">Multiplayer Pool</p><h1>8 Ball Pool</h1><p class="subtitle">Rack up. Aim true. Sink the eight.</p></div><div class="menu-grid"><button class="primary" data-action="computer">Play Computer</button><button class="secondary" data-action="challenges">Trick Shot Challenges</button><button class="secondary" data-action="host">Create Game</button><button class="secondary" data-action="join">Join Game</button><button class="secondary" data-action="settings">Settings</button><button class="secondary" data-action="howto">How to Play</button></div></div>
     <div id="host-screen" class="screen hidden"><div class="panel"><h2>Create a room</h2><label>Player name<input id="host-name" value="Player 1" maxlength="18" /></label><button id="host-btn" class="primary">Create Room</button><button class="ghost" data-action="back">Back</button></div></div>
     <div id="join-screen" class="screen hidden"><div class="panel"><h2>Join a room</h2><label>Player name<input id="join-name" value="Guest Player" maxlength="18" /></label><label>Room code<input id="room-code" placeholder="ABCD1" maxlength="10" /></label><button id="join-btn" class="primary">Join</button><button class="ghost" data-action="back">Back</button></div></div>
     <div id="lobby-screen" class="screen hidden"><div class="panel lobby-box"><p class="eyebrow">Game room</p><h2 id="room-code-label">Room</h2><div class="room-meta"><p>Share the room code with a player on the same Wi-Fi network.</p><p>Play head-to-head in real time.</p></div><div id="players-list" class="players-list"></div><div class="lobby-actions"><button id="start-match-btn" class="primary">Start Match</button><button class="ghost" data-action="back">Back</button></div></div></div>
+    <div id="challenges-screen" class="screen hidden"><div class="panel challenge-picker"><p class="eyebrow">Solo mode</p><h2>Trick Shot Challenges</h2><p class="room-meta">Pocket the marked ball in its target pocket. You get three shots.</p><div id="challenge-list" class="challenge-list"><p>Loading challenges…</p></div><button class="ghost" data-action="back">Back</button></div></div>
     <div id="game-screen" class="screen hidden">
       <div class="hud header-row"><div><p class="eyebrow">Room</p><h3 id="hud-code">—</h3></div><div><p class="eyebrow">At the table</p><h3 id="turn-label">—</h3></div><div><p class="eyebrow">Match status</p><h3 id="status-label">Waiting</h3></div><div class="timer-wrap"><div id="timer-ring" class="timer-ring" role="timer" aria-label="30 seconds remaining"><span id="timer-digits">30</span></div><div class="timer-meta"><p class="eyebrow">Shot clock</p><h3 id="timer-player">Waiting</h3></div></div><button id="end-game-btn" class="danger">End Game</button></div>
+      <div id="challenge-hud" class="challenge-hud" hidden><div><p class="eyebrow">Trick shot</p><h3 id="challenge-title"></h3></div><p id="challenge-description"></p><strong id="challenge-progress"></strong></div>
       <div class="players-hud"><div id="player-card-0" class="player-card"><span id="player-0-name">Player 1</span><b id="player-0-group">OPEN TABLE</b><div id="player-0-balls" class="remaining-balls">Groups not assigned</div></div><div id="connection-label" class="connection"><i></i> Connecting</div><div id="player-card-1" class="player-card"><span id="player-1-name">Player 2</span><b id="player-1-group">OPEN TABLE</b><div id="player-1-balls" class="remaining-balls">Groups not assigned</div></div></div>
       <div class="table-wrap"><canvas id="game-canvas" width="980" height="560" aria-label="Pool table. Drag to aim; dragging does not shoot." ></canvas></div>
       <div class="controls-panel"><div class="power-control"><label for="power-slider"><span>Shot power</span><strong id="power-readout">42%</strong></label><input id="power-slider" type="range" min="8" max="100" value="42" aria-label="Shot power, applied to the cue pull-back" /><div class="power-track"><i id="power-meter"></i></div><div class="power-scale"><span>SOFT</span><span>FIRM</span></div></div><div class="shot-actions"><button id="cancel-shot-btn" class="ghost">Cancel charge</button><button id="shoot-btn" class="primary">Shoot</button></div></div>
@@ -44,12 +46,13 @@ const powerSlider = document.getElementById('power-slider');
 const shootButton = document.getElementById('shoot-btn');
 const cancelButton = document.getElementById('cancel-shot-btn');
 const endGameButton = document.getElementById('end-game-btn');
+const challengeList = document.getElementById('challenge-list');
 const appDialog = document.getElementById('app-dialog');
 const dialogTitle = document.getElementById('dialog-title');
 const dialogMessage = document.getElementById('dialog-message');
 const dialogCancel = document.getElementById('dialog-cancel');
 const dialogConfirm = document.getElementById('dialog-confirm');
-const screens = Object.fromEntries(['menu','host','join','lobby','game','settings','howto'].map(n => [n, document.getElementById(`${n}-screen`)]));
+const screens = Object.fromEntries(['menu','host','join','lobby','challenges','game','settings','howto'].map(n => [n, document.getElementById(`${n}-screen`)]));
 let animationFrame = null;
 function animateGame() {
   animationFrame = null;
@@ -85,6 +88,14 @@ function showScreen(name) {
   state.screen = name;
   if (name === 'game') requestAnimationFrame(() => { renderer.resize(); scheduleGameAnimation(); });
 }
+function openChallenges() {
+  showScreen('challenges');
+  challengeList.innerHTML = '<p>Loading challenges…</p>';
+  socket.emit('get_challenges');
+}
+function renderChallenges(challenges) {
+  challengeList.innerHTML = challenges.map((challenge, index) => `<button class="challenge-card" data-challenge-id="${escapeHtml(challenge.id)}"><span class="challenge-index">0${index + 1}</span><span class="challenge-copy"><strong>${escapeHtml(challenge.title)}</strong><small>${escapeHtml(challenge.description)}</small></span><span class="challenge-attempts">${challenge.shots} shots</span></button>`).join('');
+}
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function activePlayer(room = state.room) { return room?.players?.[room.match.turnIndex] || null; }
 function canControl(room = state.room) {
@@ -108,14 +119,14 @@ function updateControls() {
   shootButton.disabled = !enabled || !state.aim || invalidAim;
   cancelButton.disabled = !enabled || !state.aim || state.aim.power <= .08001;
   endGameButton.disabled = !state.room || !['playing', 'paused', 'finished'].includes(state.room.status);
-  endGameButton.textContent = state.room?.status === 'finished' ? 'Back to Lobby' : 'End Game';
+  endGameButton.textContent = state.room?.mode === 'challenge' && state.room.status === 'finished' ? 'Challenge List' : state.room?.status === 'finished' ? 'Back to Lobby' : 'End Game';
   const power = state.aim?.power ?? .42;
   document.getElementById('power-readout').textContent = `${Math.round(power * 100)}%`;
   document.getElementById('power-meter').style.width = `${power * 100}%`;
   if (Number(powerSlider.value) !== Math.round(power * 100)) powerSlider.value = String(Math.round(power * 100));
   document.getElementById('control-hint').classList.toggle('invalid', !!invalidAim);
   document.getElementById('control-hint').textContent = enabled
-    ? invalidAim ? 'Wrong ball. Aim for your group.' : 'Drag on the table to aim. Set power separately; release never shoots. Tap Shoot to strike.'
+    ? invalidAim ? 'Wrong ball. Aim for your group.' : state.room.mode === 'challenge' ? `Pocket ball #${state.room.challenge.targetNumber} in the marked pocket. ${state.room.challenge.shotsRemaining} shots left.` : 'Drag on the table to aim. Set power separately; release never shoots. Tap Shoot to strike.'
     : state.room?.status === 'paused' ? 'Match paused while a player reconnects.'
       : state.room?.match?.shotInProgress || state.shotRequestPending ? 'Shot accepted — waiting for the balls to settle.'
         : state.room?.players?.[state.room.match.turnIndex]?.computer ? 'Computer is lining up a shot.' : 'Opponent’s turn — aiming and shot controls are inactive.';
@@ -130,11 +141,20 @@ function updateLobby() {
 function updateHud() {
   if (!state.room) return;
   const { match, players } = state.room;
+  const challengeHud = document.getElementById('challenge-hud');
+  challengeHud.hidden = state.room.mode !== 'challenge';
+  document.getElementById('game-screen').classList.toggle('challenge-mode', state.room.mode === 'challenge');
+  if (state.room.challenge) {
+    const challenge = state.room.challenge;
+    document.getElementById('challenge-title').textContent = challenge.title;
+    document.getElementById('challenge-description').textContent = challenge.description;
+    document.getElementById('challenge-progress').textContent = challenge.completed ? `${challenge.stars} / 3 stars` : `${challenge.shotsRemaining} shots left`;
+  }
   document.getElementById('hud-code').textContent = state.room.code;
   const current = activePlayer();
   document.getElementById('turn-label').textContent = current ? `${current.name}${current.id === socket.id ? ' · Your turn' : current.computer ? ' · Thinking' : ''}` : 'Waiting';
   document.getElementById('status-label').textContent = state.room.status === 'paused' ? 'Paused' : (match.message || 'Ready');
-  document.getElementById('connection-label').innerHTML = players.some(p => p.computer) ? '<i></i> Computer ready' : players.length < 2 ? '<i class="offline"></i> Waiting for opponent' : players.every(p => p.connected) ? '<i></i> Both connected' : '<i class="offline"></i> Reconnecting';
+  document.getElementById('connection-label').innerHTML = state.room.mode === 'challenge' ? '<i></i> Solo challenge' : players.some(p => p.computer) ? '<i></i> Computer ready' : players.length < 2 ? '<i class="offline"></i> Waiting for opponent' : players.every(p => p.connected) ? '<i></i> Both connected' : '<i class="offline"></i> Reconnecting';
   for (let i = 0; i < 2; i += 1) {
     const p = players[i]; const card = document.getElementById(`player-card-${i}`);
     card.classList.toggle('current', !!p && i === match.turnIndex);
@@ -228,11 +248,28 @@ function cancelCharge() {
 }
 function endGame() {
   if (!state.room) return;
+  if (state.room.mode === 'challenge') {
+    if (state.room.status === 'finished') { exitChallenge(); return; }
+    showAppDialog({ title: 'Leave challenge?', message: 'Your remaining shots will be lost.', confirmation: true }).then(confirmed => { if (confirmed) exitChallenge(); });
+    return;
+  }
   const code = state.room.code;
   const confirmEnd = state.room.status === 'finished'
     ? Promise.resolve(true)
     : showAppDialog({ title: 'End this game?', message: 'Both players will return to the room.', confirmation: true });
   confirmEnd.then(confirmed => { if (confirmed) socket.emit('end_match', { code }); });
+}
+function leaveRoom() {
+  if (state.room) socket.emit('leave_room', { code: state.room.code });
+  localStorage.removeItem('pool-session');
+  state.room = null; state.aim = null; state.shotRequestPending = false;
+  showScreen('menu');
+}
+function exitChallenge() {
+  if (state.room) socket.emit('leave_room', { code: state.room.code });
+  localStorage.removeItem('pool-session');
+  state.room = null; state.aim = null; state.shotRequestPending = false;
+  showScreen('challenges');
 }
 
 canvas.addEventListener('pointerdown', event => {
@@ -264,12 +301,21 @@ document.querySelector('[data-action="computer"]').addEventListener('click', () 
   state.localName = document.getElementById('host-name').value.trim() || 'Player 1';
   socket.emit('start_computer_game', { playerName: state.localName });
 });
-document.querySelectorAll('[data-action="back"]').forEach(b => b.addEventListener('click', () => showScreen(state.room ? 'lobby' : 'menu')));
+document.querySelector('[data-action="challenges"]').addEventListener('click', openChallenges);
+challengeList.addEventListener('click', event => {
+  const button = event.target.closest('[data-challenge-id]');
+  if (button) socket.emit('start_challenge', { challengeId: button.dataset.challengeId });
+});
+document.querySelectorAll('[data-action="back"]').forEach(b => b.addEventListener('click', () => {
+  if (b.closest('#lobby-screen')) leaveRoom();
+  else showScreen(state.room ? 'lobby' : 'menu');
+}));
 document.getElementById('host-btn').addEventListener('click', () => { state.localName = document.getElementById('host-name').value.trim() || 'Player 1'; socket.emit('host_room', { playerName: state.localName }); });
 document.getElementById('join-btn').addEventListener('click', () => { state.localName = document.getElementById('join-name').value.trim() || 'Guest Player'; socket.emit('join_room', { code: document.getElementById('room-code').value.trim().toUpperCase(), playerName: state.localName }); });
 document.getElementById('start-match-btn').addEventListener('click', () => { if (state.room) socket.emit('start_match', { code: state.room.code }); });
 
 socket.on('connect', () => { state.myPlayerId = socket.id; updateLobby(); });
+socket.on('challenge_list', renderChallenges);
 socket.on('connect', () => {
   try {
     const session = JSON.parse(localStorage.getItem('pool-session') || 'null');
@@ -283,7 +329,8 @@ socket.on('room_joined', ({ room, sessionToken }) => {
   if (sessionToken) localStorage.setItem('pool-session', JSON.stringify({ code: room.code, token: sessionToken }));
   state.lastRoomCode = room.code; state.lastShotCount = room.match.shotCount || 0;
   state.pocketedIds = new Set(room.match.balls.filter(b => b.pocketed).map(b => b.id));
-  showScreen('lobby'); updateLobby();
+  if (room.status === 'playing') { showScreen('game'); updateHud(); updateControls(); render(); }
+  else { showScreen('lobby'); updateLobby(); }
 });
 socket.on('session_token', ({ code, token }) => localStorage.setItem('pool-session', JSON.stringify({ code, token })));
 socket.on('resume_error', () => localStorage.removeItem('pool-session'));

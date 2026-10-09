@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
-import { createRoom, getRoomByCode, joinRoom, resumeRoom, serializeRoom, startMatch, endMatch, addComputerPlayer, chooseComputerShot, updateRoomPhysics, applyShot, SHOT_IMPACT_DELAY } from './gameEngine.js';
+import { createRoom, getRoomByCode, joinRoom, resumeRoom, serializeRoom, startMatch, startChallenge, getChallenges, endMatch, removePlayerFromRoom, addComputerPlayer, chooseComputerShot, updateRoomPhysics, applyShot, SHOT_IMPACT_DELAY } from './gameEngine.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,6 +13,7 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*', methods: ['GET', 'POST'] } });
 const rooms = new Map();
 app.use(express.json());
+app.get('/api/challenges', (req, res) => res.json(getChallenges()));
 
 const distFolder = path.join(__dirname, '..', 'dist');
 const hasBuiltClient = fs.existsSync(distFolder);
@@ -22,6 +23,8 @@ if (hasBuiltClient) {
 }
 
 io.on('connection', socket => {
+  socket.on('get_challenges', () => socket.emit('challenge_list', getChallenges()));
+
   socket.on('host_room', ({ playerName }) => {
     const room = createRoom(playerName || 'Player 1', socket.id);
     rooms.set(room.code, room);
@@ -33,6 +36,17 @@ io.on('connection', socket => {
     const room = createRoom(playerName || 'Player 1', socket.id);
     addComputerPlayer(room);
     const result = startMatch(room);
+    if (!result.ok) { socket.emit('room_error', result.error); return; }
+    rooms.set(room.code, room);
+    room.finishedBroadcast = false;
+    socket.join(room.code);
+    socket.emit('room_joined', { room: serializeRoom(room), sessionToken: room.players[0].token });
+    io.to(room.code).emit('state_update', serializeRoom(room));
+  });
+
+  socket.on('start_challenge', ({ challengeId }) => {
+    const room = createRoom('Player 1', socket.id);
+    const result = startChallenge(room, socket.id, challengeId);
     if (!result.ok) { socket.emit('room_error', result.error); return; }
     rooms.set(room.code, room);
     room.finishedBroadcast = false;
@@ -76,6 +90,16 @@ io.on('connection', socket => {
     const result = endMatch(room, socket.id);
     if (!result.ok) { socket.emit('room_error', result.error); return; }
     io.to(room.code).emit('state_update', serializeRoom(room));
+  });
+
+  socket.on('leave_room', ({ code } = {}) => {
+    const room = getRoomByCode(rooms, code);
+    if (!room) return;
+    const result = removePlayerFromRoom(room, socket.id);
+    if (!result.ok) { socket.emit('room_error', result.error); return; }
+    socket.leave(room.code);
+    if (result.closeRoom) rooms.delete(room.code);
+    else io.to(room.code).emit('state_update', serializeRoom(room));
   });
 
   socket.on('shoot_ball', ({ code, angle, power } = {}) => {

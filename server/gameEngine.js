@@ -24,6 +24,11 @@ const BALL_CONTACT_FRICTION = .075;
 const BALL_INERTIA_FACTOR = .4;
 const SPIN_DECAY = 2.4;
 const DROP_DURATION_SECONDS = 0.31;
+const CHALLENGE_SETUPS = [
+  { id: 'corner-cut', title: 'Corner Cut', description: 'Cut the 1-ball into the upper-right pocket.', targetNumber: 1, pocketIndex: 2, cue: { x: 400, y: 445 }, target: { x: 620, y: 280 } },
+  { id: 'side-pocket', title: 'Side Pocket', description: 'Send the 3-ball straight up into the side pocket.', targetNumber: 3, pocketIndex: 1, cue: { x: 507, y: 445 }, target: { x: 500, y: 300 } },
+  { id: 'long-corner', title: 'Long Corner', description: 'Carry the 5-ball down-table into the corner.', targetNumber: 5, pocketIndex: 5, cue: { x: 564, y: 106 }, target: { x: 760, y: 330 } },
+];
 
 export function randomRoomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -70,14 +75,15 @@ function stopTurnTimer(match, now = Date.now()) {
 }
 
 export function createRoom(hostName, socketId) {
-  return { code: randomRoomCode(), status: 'waiting', createdAt: Date.now(), resumeStatus: null,
+  return { code: randomRoomCode(), status: 'waiting', mode: 'multiplayer', challenge: null, createdAt: Date.now(), resumeStatus: null,
     players: [{ id: socketId, name: hostName, token: randomUUID(), host: true, connected: true, group: null, score: 0 }], match: createGameState() };
 }
 
 export function serializeRoom(room, now = Date.now()) {
   const timer = room.match.timer || { durationMs: TURN_DURATION_MS, running: false, remainingMs: TURN_DURATION_MS, deadline: null, turnSerial: 0 };
   const remainingMs = timer.running && Number.isFinite(timer.deadline) ? Math.max(0, timer.deadline - now) : Math.max(0, timer.remainingMs ?? TURN_DURATION_MS);
-  return { code: room.code, status: room.status, players: room.players.map(p => ({ id: p.id, name: p.name, host: p.host, computer: !!p.computer, connected: p.connected, group: p.group, score: p.score })),
+  return { code: room.code, status: room.status, mode: room.mode || 'multiplayer', challenge: room.challenge ? { ...room.challenge, targetPocket: { ...room.challenge.targetPocket } } : null,
+    players: room.players.map(p => ({ id: p.id, name: p.name, host: p.host, computer: !!p.computer, connected: p.connected, group: p.group, score: p.score })),
     match: { turnIndex: room.match.turnIndex, status: room.match.status, winner: room.match.winner, message: room.match.message, lastEvent: room.match.lastEvent,
       shotCount: room.match.shotCount, shotInProgress: room.match.shotInProgress, ballInHand: room.match.ballInHand, foul: room.match.foul,
       timeoutCount: room.match.timeoutCount || 0, lastTimeout: room.match.lastTimeout || null,
@@ -128,12 +134,57 @@ export function startMatch(room) {
   return { ok: true };
 }
 
+export function getChallenges() {
+  return CHALLENGE_SETUPS.map(({ id, title, description }) => ({ id, title, description, shots: 3 }));
+}
+
+export function startChallenge(room, socketId, challengeId, now = Date.now()) {
+  if (!room || room.players.length !== 1 || room.players[0].id !== socketId) return { ok: false, error: 'Challenges require a solo room.' };
+  if (room.status !== 'waiting') return { ok: false, error: 'Return to the menu before starting a challenge.' };
+  const setup = CHALLENGE_SETUPS.find(challenge => challenge.id === challengeId);
+  if (!setup) return { ok: false, error: 'That challenge could not be found.' };
+  room.mode = 'challenge';
+  room.status = 'playing';
+  room.resumeStatus = null;
+  room.match = createGameState();
+  room.match.status = 'playing';
+  room.match.message = setup.title;
+  room.match.lastEvent = `Challenge started: ${setup.title}.`;
+  const target = room.match.balls.find(ball => ball.number === setup.targetNumber);
+  const cue = room.match.balls.find(ball => ball.isCue);
+  room.match.balls.forEach(ball => {
+    if (ball !== cue && ball !== target) { ball.pocketed = true; ball.visible = false; ball.dropProgress = 1; }
+    ball.vx = 0; ball.vy = 0; ball.spin = 0; ball.rotation = 0;
+    ball.pocketedThisTurn = false;
+  });
+  Object.assign(cue, setup.cue, { pocketed: false, visible: true, dropProgress: 0, pocketX: null, pocketY: null });
+  Object.assign(target, setup.target, { pocketed: false, visible: true, dropProgress: 0, pocketX: null, pocketY: null });
+  room.players[0].group = target.type;
+  room.challenge = { id: setup.id, title: setup.title, description: setup.description, targetNumber: setup.targetNumber,
+    targetPocket: { ...TABLE.pockets[setup.pocketIndex] }, targetStart: { ...setup.target }, cueStart: { ...setup.cue },
+    shotsTotal: 3, shotsRemaining: 3, stars: 0, completed: false };
+  startTurnTimer(room.match, now);
+  return { ok: true };
+}
+
 export function endMatch(room, socketId) {
   if (!room?.players.some(player => player.id === socketId)) return { ok: false, error: 'Player is not in this room.' };
   if (!['playing', 'paused', 'finished'].includes(room.status)) return { ok: false, error: 'There is no active match to end.' };
-  room.status = 'waiting'; room.resumeStatus = null; room.match = createGameState();
+  room.status = 'waiting'; room.resumeStatus = null; room.match = createGameState(); room.mode = 'multiplayer'; room.challenge = null;
   room.players.forEach(player => { player.group = null; player.score = 0; });
   return { ok: true };
+}
+
+export function removePlayerFromRoom(room, socketId) {
+  const playerIndex = room?.players.findIndex(player => player.id === socketId) ?? -1;
+  if (playerIndex < 0) return { ok: false, error: 'Player is not in this room.' };
+  room.players.splice(playerIndex, 1);
+  const closeRoom = room.players.length === 0 || room.players.some(player => player.computer);
+  if (closeRoom) return { ok: true, closeRoom: true };
+  room.status = 'waiting'; room.resumeStatus = null; room.match = createGameState();
+  room.players.forEach(player => { player.group = null; player.score = 0; });
+  if (room.players.length === 1) room.players[0].host = true;
+  return { ok: true, closeRoom: false };
 }
 
 function collide(a, b) {
@@ -169,7 +220,7 @@ export function detectPocketEntry(ball, fromX = ball.x, fromY = ball.y, canPocke
   for (const pocket of TABLE.pockets) {
     const sweep = segmentDistanceSquared(fromX, fromY, ball.x, ball.y, pocket.x, pocket.y);
     // The center may enter the visible opening by up to its radius; a small lip allowance keeps edge shots playable.
-    const captureRadius = pocket.radius + ball.radius * .82;
+    const captureRadius = pocket.radius + ball.radius * 1.15;
     const movedTowardPocket = sweep.dx * (pocket.x - fromX) + sweep.dy * (pocket.y - fromY) > 0.0001;
     if (movedTowardPocket && sweep.distanceSquared <= captureRadius * captureRadius) {
       if (!canPocket(ball)) {
@@ -211,7 +262,7 @@ function hasCushionOpening(axis, ball, coordinate) {
       ? (p.y < TABLE_HEIGHT / 2 ? Math.abs(coordinate - TABLE.bounds.top) < 1 : Math.abs(coordinate - TABLE.bounds.bottom) < 1)
       : (p.x < TABLE_WIDTH / 2 ? Math.abs(coordinate - TABLE.bounds.left) < 1 : Math.abs(coordinate - TABLE.bounds.right) < 1);
     const along = axis === 'horizontal' ? Math.abs(ball.x - p.x) : Math.abs(ball.y - p.y);
-    return alignsWithRail && along < p.radius + ball.radius * .95;
+    return alignsWithRail && along < p.radius + ball.radius * 1.5;
   });
 }
 
@@ -306,6 +357,7 @@ export function applyShot(room, socketId, payload = {}, now = Date.now()) {
   room.match.pendingShot = { vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, remaining: SHOT_IMPACT_DELAY };
   room.match.shotInProgress = true; room.match.shotCount += 1; room.match.foul = false; room.match.ballInHand = false; room.match.firstContact = false;
   room.match.message = `${room.players[playerIndex].name} shoots.`; room.match.lastEvent = 'Cue ball in motion.';
+  if (room.challenge && room.challenge.shotsRemaining > 0) room.challenge.shotsRemaining -= 1;
   room.match.balls.forEach(b => { b.pocketedThisTurn = false; }); return { ok: true };
 }
 
@@ -386,6 +438,7 @@ function assignGroups(room, ball, current) {
 function finalizeShot(room, now = Date.now()) {
   const match = room.match, current = room.players[match.turnIndex], pocketed = match.balls.filter(b => b.pocketedThisTurn), cueScratch = pocketed.some(b => b.isCue);
   const eight = pocketed.find(b => b.number === 8); match.shotInProgress = false; match.foul = cueScratch;
+  if (room.challenge) { finalizeChallengeShot(room, current, pocketed, cueScratch, now); return; }
   if (eight) {
     const remaining = current.group && match.balls.some(b => b.type === current.group && !b.pocketed);
     const foul = cueScratch || remaining;
@@ -420,6 +473,45 @@ function finalizeShot(room, now = Date.now()) {
   if (own) { match.message = `${current.name} continues.`; match.lastEvent = 'Own-group ball pocketed.'; startTurnTimer(match, now); return; }
   match.message = `${room.players[1 - match.turnIndex].name}'s turn.`;
   match.lastEvent = legal.length ? 'Turn ended.' : 'No ball pocketed; turn passes.';
+  passTurn(room, now);
+}
+
+function finalizeChallengeShot(room, player, pocketed, cueScratch, now) {
+  const match = room.match, challenge = room.challenge;
+  const target = match.balls.find(ball => ball.number === challenge.targetNumber);
+  const targetPocketed = pocketed.includes(target);
+  const correctPocket = targetPocketed && Math.hypot(target.pocketX - challenge.targetPocket.x, target.pocketY - challenge.targetPocket.y) < 1;
+  if (correctPocket) {
+    challenge.completed = true;
+    const shotsUsed = challenge.shotsTotal - challenge.shotsRemaining;
+    challenge.stars = shotsUsed === 1 ? 3 : shotsUsed === 2 ? 2 : 1;
+    room.status = 'finished'; match.status = 'finished'; match.winner = player.name;
+    match.message = `Challenge clear! ${challenge.stars} ${challenge.stars === 1 ? 'star' : 'stars'}.`;
+    match.lastEvent = `${challenge.title} completed in ${shotsUsed} shot${shotsUsed === 1 ? '' : 's'}.`;
+    stopTurnTimer(match, now);
+    return;
+  }
+  if (targetPocketed) {
+    target.pocketed = false; target.pocketedThisTurn = false; target.visible = true; target.dropProgress = 0;
+    target.pocketX = null; target.pocketY = null; target.x = challenge.targetStart.x; target.y = challenge.targetStart.y;
+    target.vx = 0; target.vy = 0; target.spin = 0;
+  }
+  if (cueScratch) {
+    const cue = match.balls.find(ball => ball.isCue);
+    cue.pocketed = false; cue.pocketedThisTurn = false; cue.visible = true; cue.dropProgress = 0;
+    cue.pocketX = null; cue.pocketY = null; cue.x = challenge.cueStart.x; cue.y = challenge.cueStart.y;
+    cue.vx = 0; cue.vy = 0; cue.spin = 0;
+  }
+  if (challenge.shotsRemaining <= 0) {
+    challenge.completed = true; challenge.stars = 0;
+    room.status = 'finished'; match.status = 'finished'; match.winner = null;
+    match.message = 'Challenge over. No stars this time.'; match.lastEvent = `${challenge.title} attempts exhausted.`;
+    stopTurnTimer(match, now);
+    return;
+  }
+  match.foul = cueScratch;
+  match.message = `${cueScratch ? 'Scratch' : 'Target missed'} — ${challenge.shotsRemaining} shots left.`;
+  match.lastEvent = cueScratch ? 'Cue ball reset for another challenge attempt.' : 'Challenge attempt ended.';
   passTurn(room, now);
 }
 

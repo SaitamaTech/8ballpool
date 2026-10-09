@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { TABLE, createRoom, joinRoom, resumeRoom, startMatch, endMatch, addComputerPlayer, chooseComputerShot, applyShot, createRack, detectPocketEntry, updateRoomPhysics } from '../server/gameEngine.js';
+import { TABLE, createRoom, joinRoom, resumeRoom, startMatch, startChallenge, getChallenges, endMatch, removePlayerFromRoom, addComputerPlayer, chooseComputerShot, applyShot, createRack, detectPocketEntry, updateRoomPhysics } from '../server/gameEngine.js';
 
 describe('room management', () => {
   test('creates a room with a host player', () => {
@@ -43,6 +43,49 @@ describe('room management', () => {
     expect(applyShot(room, room.players[1].id, shot).ok).toBe(true);
   });
 
+  test('loads solo challenge presets and starts a target-pocket layout', () => {
+    const room = createRoom('Player', 'socket-1');
+    const challenges = getChallenges();
+
+    expect(challenges).toHaveLength(3);
+    expect(startChallenge(room, 'socket-1', challenges[0].id).ok).toBe(true);
+    expect(room.mode).toBe('challenge');
+    expect(room.challenge.shotsRemaining).toBe(3);
+    expect(room.match.balls.filter(ball => !ball.pocketed)).toHaveLength(2);
+  });
+
+  test('awards three stars when the target reaches its challenge pocket on the first shot', () => {
+    const room = createRoom('Player', 'socket-1');
+    startChallenge(room, 'socket-1', 'corner-cut');
+    const challenge = room.challenge;
+    const angle = Math.atan2(challenge.targetStart.y - challenge.cueStart.y, challenge.targetStart.x - challenge.cueStart.x);
+    expect(applyShot(room, 'socket-1', { angle, power: .65 }).ok).toBe(true);
+    const target = room.match.balls.find(ball => ball.number === challenge.targetNumber);
+    target.pocketed = true; target.pocketedThisTurn = true; target.dropProgress = 1;
+    target.pocketX = challenge.targetPocket.x; target.pocketY = challenge.targetPocket.y;
+    room.match.pendingShot = null;
+
+    updateRoomPhysics(room, 1 / 60);
+
+    expect(room.status).toBe('finished');
+    expect(room.challenge.completed).toBe(true);
+    expect(room.challenge.stars).toBe(3);
+    expect(room.match.message).toContain('3 stars');
+  });
+
+  test('keeps a missed challenge active with two shots remaining', () => {
+    const room = createRoom('Player', 'socket-1');
+    startChallenge(room, 'socket-1', 'corner-cut');
+    expect(applyShot(room, 'socket-1', { angle: -Math.PI / 2, power: .4 }).ok).toBe(true);
+    room.match.pendingShot = null;
+
+    updateRoomPhysics(room, 1 / 60);
+
+    expect(room.status).toBe('playing');
+    expect(room.challenge.shotsRemaining).toBe(2);
+    expect(room.match.timer.running).toBe(true);
+  });
+
   test('ends a match for a room player and returns both players to the lobby', () => {
     const room = createRoom('Host', 'socket-1');
     joinRoom(room, 'socket-2', 'Guest'); startMatch(room);
@@ -62,6 +105,24 @@ describe('room management', () => {
 
     expect(endMatch(room, 'stranger').ok).toBe(false);
     expect(room.status).toBe('playing');
+  });
+
+  test('leaves a room cleanly and promotes the remaining human player', () => {
+    const room = createRoom('Host', 'socket-1');
+    joinRoom(room, 'socket-2', 'Guest'); startMatch(room);
+
+    expect(removePlayerFromRoom(room, 'socket-1')).toEqual({ ok: true, closeRoom: false });
+    expect(room.status).toBe('waiting');
+    expect(room.players).toHaveLength(1);
+    expect(room.players[0]).toMatchObject({ id: 'socket-2', host: true });
+    expect(room.match.shotInProgress).toBe(false);
+  });
+
+  test('closes a room when its human leaves a computer match', () => {
+    const room = createRoom('Player', 'socket-1');
+    addComputerPlayer(room); startMatch(room);
+
+    expect(removePlayerFromRoom(room, 'socket-1')).toEqual({ ok: true, closeRoom: true });
   });
 
   test('pauses a disconnected match and restores the same player on reconnect', () => {
@@ -259,6 +320,15 @@ describe('game rules', () => {
       expect(ball.pocketX).toBe(pocket.x);
       expect(ball.pocketY).toBe(pocket.y);
     });
+  });
+
+  test('captures a shallow corner-pocket approach near the rail edge', () => {
+    const ball = { x: 106, y: 100, vx: -360, vy: -360, radius: 14, pocketed: false };
+
+    const captured = detectPocketEntry(ball, 112, 106);
+
+    expect(captured).toBe(TABLE.pockets[0]);
+    expect(ball.pocketed).toBe(true);
   });
 
   test('pocketed balls are removed from collision calculations immediately', () => {
