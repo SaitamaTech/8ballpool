@@ -9,6 +9,7 @@ const state = {
   pointerId: null, shotRequestPending: false, playedShots: new Set(), pocketedIds: new Set(), lastRoomCode: null, lastShotCount: 0,
   timerSnapshotMs: 30_000, timerSnapshotAt: performance.now(), roomReceivedAt: performance.now(),
 };
+const BALL_COLORS = { 1:'#f5d32f', 2:'#1357b5', 3:'#d5222b', 4:'#67238c', 5:'#f28020', 6:'#198347', 7:'#852525', 8:'#101316', 9:'#f5d32f', 10:'#1357b5', 11:'#d5222b', 12:'#67238c', 13:'#f28020', 14:'#198347', 15:'#852525' };
 const sounds = { cue: new Audio('/cue-strike.wav'), pocket: new Audio('/pocket-drop.wav') };
 function playSound(kind, volume) {
   const audio = sounds[kind]?.cloneNode();
@@ -24,10 +25,10 @@ app.innerHTML = `
     <div id="join-screen" class="screen hidden"><div class="panel"><h2>Join a room</h2><label>Player name<input id="join-name" value="Guest Player" maxlength="18" /></label><label>Room code<input id="room-code" placeholder="ABCD1" maxlength="10" /></label><button id="join-btn" class="primary">Join</button><button class="ghost" data-action="back">Back</button></div></div>
     <div id="lobby-screen" class="screen hidden"><div class="panel lobby-box"><p class="eyebrow">Game room</p><h2 id="room-code-label">Room</h2><div class="room-meta"><p>Share the room code with a player on the same Wi-Fi network.</p><p>Play head-to-head in real time.</p></div><div id="players-list" class="players-list"></div><div class="lobby-actions"><button id="start-match-btn" class="primary">Start Match</button><button class="ghost" data-action="back">Back</button></div></div></div>
     <div id="game-screen" class="screen hidden">
-      <div class="hud header-row"><div><p class="eyebrow">Room</p><h3 id="hud-code">—</h3></div><div><p class="eyebrow">At the table</p><h3 id="turn-label">—</h3></div><div><p class="eyebrow">Match status</p><h3 id="status-label">Waiting</h3></div><div class="timer-wrap"><div id="timer-ring" class="timer-ring" role="timer" aria-label="30 seconds remaining"><span id="timer-digits">30</span></div><div class="timer-meta"><p class="eyebrow">Shot clock</p><h3 id="timer-player">Waiting</h3></div></div></div>
-      <div class="players-hud"><div id="player-card-0" class="player-card"><span id="player-0-name">Player 1</span><b id="player-0-group">OPEN TABLE</b><small id="player-0-balls">Groups not assigned</small></div><div id="connection-label" class="connection"><i></i> Connecting</div><div id="player-card-1" class="player-card"><span id="player-1-name">Player 2</span><b id="player-1-group">OPEN TABLE</b><small id="player-1-balls">Groups not assigned</small></div></div>
+      <div class="hud header-row"><div><p class="eyebrow">Room</p><h3 id="hud-code">—</h3></div><div><p class="eyebrow">At the table</p><h3 id="turn-label">—</h3></div><div><p class="eyebrow">Match status</p><h3 id="status-label">Waiting</h3></div><div class="timer-wrap"><div id="timer-ring" class="timer-ring" role="timer" aria-label="30 seconds remaining"><span id="timer-digits">30</span></div><div class="timer-meta"><p class="eyebrow">Shot clock</p><h3 id="timer-player">Waiting</h3></div></div><button id="end-game-btn" class="danger">End Game</button></div>
+      <div class="players-hud"><div id="player-card-0" class="player-card"><span id="player-0-name">Player 1</span><b id="player-0-group">OPEN TABLE</b><div id="player-0-balls" class="remaining-balls">Groups not assigned</div></div><div id="connection-label" class="connection"><i></i> Connecting</div><div id="player-card-1" class="player-card"><span id="player-1-name">Player 2</span><b id="player-1-group">OPEN TABLE</b><div id="player-1-balls" class="remaining-balls">Groups not assigned</div></div></div>
       <div class="table-wrap"><canvas id="game-canvas" width="980" height="560" aria-label="Pool table. Drag to aim; dragging does not shoot." ></canvas></div>
-      <div class="controls-panel"><div class="power-control"><label for="power-slider"><span>Shot power</span><strong id="power-readout">42%</strong></label><input id="power-slider" type="range" min="8" max="100" value="42" aria-label="Shot power, applied to the cue pull-back" /><div class="power-track"><i id="power-meter"></i></div><div class="power-scale"><span>SOFT</span><span>FIRM</span></div></div><div class="game-actions"><div class="shot-actions"><button id="cancel-shot-btn" class="ghost">Cancel charge</button><button id="shoot-btn" class="primary">Shoot</button></div><button id="end-game-btn" class="danger">End Game</button></div></div>
+      <div class="controls-panel"><div class="power-control"><label for="power-slider"><span>Shot power</span><strong id="power-readout">42%</strong></label><input id="power-slider" type="range" min="8" max="100" value="42" aria-label="Shot power, applied to the cue pull-back" /><div class="power-track"><i id="power-meter"></i></div><div class="power-scale"><span>SOFT</span><span>FIRM</span></div></div><div class="shot-actions"><button id="cancel-shot-btn" class="ghost">Cancel charge</button><button id="shoot-btn" class="primary">Shoot</button></div></div>
       <p id="control-hint" class="control-hint">Drag on the table to aim. Set power separately; release never shoots. Tap Shoot to strike.</p>
     </div>
     <div id="settings-screen" class="screen hidden"><div class="panel"><h2>Settings</h2><label>Graphics<select id="graphics-mode"><option value="balanced">Balanced</option><option value="performance">Performance</option></select></label><button class="primary" data-action="back">Back</button></div></div>
@@ -69,14 +70,15 @@ function render() {
   const elapsed = state.room.status === 'playing' ? Math.min((performance.now() - state.roomReceivedAt) / 1000, 1 / 30) : 0;
   const displayRoom = elapsed > 0 ? {
     ...state.room,
-    match: { ...state.room.match, balls: state.room.match.balls.map(ball => ball.pocketed ? ball : { ...ball, x: ball.x + ball.vx * elapsed, y: ball.y + ball.vy * elapsed }) },
+    match: { ...state.room.match, balls: state.room.match.balls.map(ball => ball.pocketed ? ball : { ...ball, x: ball.x + ball.vx * elapsed, y: ball.y + ball.vy * elapsed, rotation: (ball.rotation || 0) + (ball.spin || 0) * elapsed }) },
   } : state.room;
   renderer.draw(displayRoom, canAim ? state.aim : null);
 }
 function updateControls() {
   const enabled = canControl();
+  const invalidAim = enabled && state.aim && !renderer.canShoot(state.room, state.aim.angle);
   powerSlider.disabled = !enabled;
-  shootButton.disabled = !enabled || !state.aim;
+  shootButton.disabled = !enabled || !state.aim || invalidAim;
   cancelButton.disabled = !enabled || !state.aim || state.aim.power <= .08001;
   endGameButton.disabled = !state.room || !['playing', 'paused', 'finished'].includes(state.room.status);
   endGameButton.textContent = state.room?.status === 'finished' ? 'Back to Lobby' : 'End Game';
@@ -84,8 +86,9 @@ function updateControls() {
   document.getElementById('power-readout').textContent = `${Math.round(power * 100)}%`;
   document.getElementById('power-meter').style.width = `${power * 100}%`;
   if (Number(powerSlider.value) !== Math.round(power * 100)) powerSlider.value = String(Math.round(power * 100));
+  document.getElementById('control-hint').classList.toggle('invalid', !!invalidAim);
   document.getElementById('control-hint').textContent = enabled
-    ? 'Drag on the table to aim. Set power separately; release never shoots. Tap Shoot to strike.'
+    ? invalidAim ? 'Wrong ball. Aim for your group.' : 'Drag on the table to aim. Set power separately; release never shoots. Tap Shoot to strike.'
     : state.room?.status === 'paused' ? 'Match paused while a player reconnects.'
       : state.room?.match?.shotInProgress || state.shotRequestPending ? 'Shot accepted — waiting for the balls to settle.' : 'Opponent’s turn — aiming and shot controls are inactive.';
 }
@@ -109,8 +112,12 @@ function updateHud() {
     card.classList.toggle('current', !!p && i === match.turnIndex);
     document.getElementById(`player-${i}-name`).textContent = p?.name || `Player ${i + 1}`;
     document.getElementById(`player-${i}-group`).textContent = p?.group ? p.group.toUpperCase() : 'OPEN TABLE';
-    const remaining = p?.group ? match.balls.filter(b => !b.pocketed && b.type === p.group).map(b => b.number) : [];
-    document.getElementById(`player-${i}-balls`).textContent = p?.group ? (remaining.length ? `Remaining: ${remaining.join(' · ')}` : 'Group cleared · 8-ball next') : 'Groups not assigned';
+    const remainingElement = document.getElementById(`player-${i}-balls`);
+    const remaining = p?.group ? match.balls.filter(b => !b.pocketed && b.type === p.group) : [];
+    if (!p?.group) remainingElement.textContent = 'Groups not assigned';
+    else if (!remaining.length) remainingElement.textContent = '8-ball next';
+    else remainingElement.innerHTML = remaining.map(ball => `<span class="ball-token ${ball.type}" style="--ball-color:${BALL_COLORS[ball.number]}" title="Ball ${ball.number}" aria-label="Ball ${ball.number}"><span class="ball-number">${ball.number}</span></span>`).join('');
+    remainingElement.setAttribute('aria-label', p?.group ? `${p.name}'s remaining balls${remaining.length ? `: ${remaining.map(ball => ball.number).join(', ')}` : ': 8-ball next'}` : 'Groups not assigned');
   }
   updateTimerHud();
 }
@@ -138,12 +145,25 @@ function detectNewPockets(room) {
     state.pocketedIds = new Set(room.match.balls.filter(b => b.pocketed).map(b => b.id));
   } else {
     for (const ball of room.match.balls) {
-      if (ball.pocketed && !state.pocketedIds.has(ball.id)) playSound('pocket', .22);
+      if (ball.pocketed && !state.pocketedIds.has(ball.id)) {
+        playSound('pocket', .22);
+        renderer.addPocket(ball.pocketX ?? ball.x, ball.pocketY ?? ball.y);
+      }
       if (ball.pocketed) state.pocketedIds.add(ball.id);
     }
   }
   state.lastRoomCode = room.code;
   state.lastShotCount = shotCount;
+}
+function detectImpacts(previousRoom, room) {
+  if (!previousRoom || previousRoom.code !== room.code || !room.match.shotInProgress) return;
+  const previousBalls = new Map(previousRoom.match.balls.map(ball => [ball.id, ball]));
+  for (const ball of room.match.balls) {
+    const previous = previousBalls.get(ball.id);
+    if (!previous || previous.isCue || previous.pocketed || ball.pocketed) continue;
+    const change = Math.hypot(ball.vx - previous.vx, ball.vy - previous.vy);
+    if (change > 42) renderer.addImpact(ball.x, ball.y, Math.min(1, change / 300));
+  }
 }
 function getPointerWorld(event) {
   const rect = canvas.getBoundingClientRect(); const L = renderer.layout();
@@ -167,7 +187,7 @@ function setPower(value) {
   render(); updateControls();
 }
 function shoot() {
-  if (!canControl() || !state.aim) return;
+  if (!canControl() || !state.aim || !renderer.canShoot(state.room, state.aim.angle)) return;
   state.shotRequestPending = true;
   updateControls();
   socket.emit('shoot_ball', { code: state.room.code, angle: state.aim.angle, power: state.aim.power });
@@ -236,6 +256,7 @@ socket.on('shot_started', shot => {
   renderer.playCueStrike(shot); playSound('cue', .42); render(); updateControls();
 });
 socket.on('state_update', room => {
+  detectImpacts(state.room, room);
   detectNewPockets(room); state.room = room;
   state.roomReceivedAt = performance.now();
   state.timerSnapshotMs = room.match.timer?.remainingMs ?? 30_000; state.timerSnapshotAt = performance.now();

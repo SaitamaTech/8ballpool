@@ -100,6 +100,52 @@ describe('game rules', () => {
     expect(result.ok).toBe(false);
   });
 
+  test('rejects a direct shot at an opponent group ball', () => {
+    const room = createRoom('Host', 'socket-1');
+    joinRoom(room, 'socket-2', 'Guest'); startMatch(room);
+    room.players[0].group = 'stripe'; room.players[1].group = 'solid';
+
+    const result = applyShot(room, 'socket-1', { angle: 0, power: .42 });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/your remaining balls/i);
+    expect(room.match.shotInProgress).toBe(false);
+  });
+
+  test('bounces an opponent group ball away from a pocket', () => {
+    const room = createRoom('Host', 'socket-1');
+    joinRoom(room, 'socket-2', 'Guest'); startMatch(room);
+    room.players[0].group = 'solid'; room.players[1].group = 'stripe';
+    const ball = room.match.balls.find(candidate => candidate.number === 9);
+    room.match.balls.filter(candidate => candidate !== ball && !candidate.isCue).forEach(candidate => { candidate.pocketed = true; });
+    ball.x = 100; ball.y = 90; ball.vx = -90; ball.vy = -90;
+
+    updateRoomPhysics(room, 1 / 60);
+
+    expect(ball.pocketed).toBe(false);
+    expect(ball.vx).toBeGreaterThan(0);
+    expect(ball.vy).toBeGreaterThan(0);
+  });
+
+  test('returns an opponent ball potted during an open-table shot', () => {
+    const room = createRoom('Host', 'socket-1');
+    joinRoom(room, 'socket-2', 'Guest'); startMatch(room);
+    room.players[0].group = 'solid'; room.players[1].group = 'stripe';
+    const ball = room.match.balls.find(candidate => candidate.number === 9);
+    const entry = { x: 120, y: 130 };
+    ball.pocketed = true; ball.pocketedThisTurn = true; ball.dropProgress = 1; ball.pocketEntryPosition = entry;
+    room.match.firstContact = true; room.match.shotInProgress = true;
+
+    updateRoomPhysics(room, 1 / 60);
+
+    expect(ball.pocketed).toBe(false);
+    expect(ball.pocketedThisTurn).toBe(false);
+    expect(ball.x).toBe(entry.x);
+    expect(ball.y).toBe(entry.y);
+    expect(room.match.turnIndex).toBe(1);
+    expect(room.match.foul).toBe(true);
+  });
+
   test('stops physics when balls settle', () => {
     const room = createRoom('Host', 'socket-1');
     joinRoom(room, 'socket-2', 'Guest');
@@ -149,6 +195,22 @@ describe('game rules', () => {
     expect(room.match.firstContact).toBe(true);
     expect(headBall.vx).toBeGreaterThan(100);
     expect(cue.vx).toBeLessThan(headBall.vx);
+  });
+
+  test('glancing ball impacts transfer tangential friction into spin', () => {
+    const room = createRoom('Host', 'socket-1');
+    joinRoom(room, 'socket-2', 'Guest'); startMatch(room);
+    const cue = room.match.balls.find(ball => ball.isCue);
+    const objectBall = room.match.balls.find(ball => ball.number === 1);
+    room.match.balls.filter(ball => ball !== cue && ball !== objectBall).forEach(ball => { ball.pocketed = true; });
+    cue.x = 322; cue.y = 280; cue.vx = 180; cue.vy = 0;
+    objectBall.x = 350; objectBall.y = 290;
+
+    updateRoomPhysics(room, 1 / 60);
+
+    expect(cue.spin).not.toBe(0);
+    expect(objectBall.spin).not.toBe(0);
+    expect(objectBall.vy).toBeGreaterThan(0);
   });
 
   test('captured balls remain synchronized through a visible pocket drop', () => {

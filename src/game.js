@@ -6,6 +6,9 @@ export class PoolRenderer {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.cueStrike = null;
+    this.effects = [];
+    this.shakeAt = 0;
+    this.shakeStrength = 0;
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
     this.tableCanvas = document.createElement('canvas');
     this.tableCanvas.width = Math.floor(WORLD_W * ratio);
@@ -19,6 +22,21 @@ export class PoolRenderer {
   playCueStrike(shot) {
     if (this.cueStrike?.shotId === shot.shotId) return;
     this.cueStrike = { ...shot, startedAt: performance.now() };
+  }
+
+  addImpact(x, y, intensity = 1) {
+    const now = performance.now();
+    const strength = Math.max(.25, Math.min(1, intensity));
+    this.effects.push({ kind: 'impact', x, y, startedAt: now, duration: 460, strength,
+      particles: Array.from({ length: 12 }, (_, index) => ({ angle: index * Math.PI / 6 + (Math.random() - .5) * .16, distance: 26 + Math.random() * 28 })) });
+    this.shakeAt = now;
+    this.shakeStrength = Math.max(this.shakeStrength, 2 + strength * 5);
+  }
+
+  addPocket(x, y) {
+    const now = performance.now();
+    this.effects.push({ kind: 'pocket', x, y, startedAt: now, duration: 720, strength: 1,
+      particles: Array.from({ length: 16 }, (_, index) => ({ angle: index * Math.PI / 8, distance: 24 + (index % 4) * 9 })) });
   }
 
   resize() {
@@ -50,12 +68,15 @@ export class PoolRenderer {
     const bg = ctx.createRadialGradient(L.width / 2, L.height / 2, 20, L.width / 2, L.height / 2, Math.max(L.width, L.height) * .7);
     bg.addColorStop(0, '#173b2b'); bg.addColorStop(1, '#06120e');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, L.width, L.height);
-    ctx.save(); ctx.translate(L.ox, L.oy); ctx.scale(L.scale, L.scale);
+    const shakeElapsed = performance.now() - this.shakeAt;
+    const shake = shakeElapsed < 170 ? Math.sin(shakeElapsed * .11) * this.shakeStrength * (1 - shakeElapsed / 170) : 0;
+    if (!shake) this.shakeStrength = 0;
+    ctx.save(); ctx.translate(L.ox + shake, L.oy - shake * .35); ctx.scale(L.scale, L.scale);
     ctx.drawImage(this.tableCanvas, 0, 0, this.tableCanvas.width, this.tableCanvas.height, 0, 0, WORLD_W, WORLD_H);
     const balls = room.match?.balls || [];
     if (aim && room.match?.status === 'playing' && !room.match?.shotInProgress) {
       const cue = balls.find(b => b.isCue && !b.pocketed);
-      if (cue) this.drawPrediction(ctx, cue, balls, aim.angle, L.scale);
+      if (cue) this.drawPrediction(ctx, cue, balls, aim.angle, L.scale, room);
     }
     for (const ball of balls) if (!ball.pocketed || (ball.dropProgress > 0 && ball.dropProgress < 1)) this.drawBall(ctx, ball);
     if (aim && room.match?.status === 'playing' && !room.match?.shotInProgress) {
@@ -70,7 +91,60 @@ export class PoolRenderer {
         ctx.restore();
       } else this.cueStrike = null;
     }
+    this.drawEffects(ctx, L.scale);
     ctx.restore();
+  }
+
+  findAimTarget(cue, balls, angle) {
+    const ux = Math.cos(angle), uy = Math.sin(angle);
+    let distance = 520, hit = null;
+    for (const ball of balls) {
+      if (ball.isCue || ball.pocketed) continue;
+      const dx = ball.x - cue.x, dy = ball.y - cue.y, along = dx * ux + dy * uy;
+      if (along <= 0) continue;
+      const perpendicular = Math.abs(dx * uy - dy * ux), combinedRadius = cue.radius + ball.radius;
+      if (perpendicular >= combinedRadius) continue;
+      const candidateDistance = along - Math.sqrt(combinedRadius ** 2 - perpendicular ** 2);
+      if (candidateDistance < distance) { distance = candidateDistance; hit = ball; }
+    }
+    return { distance, hit };
+  }
+
+  canShoot(room, angle) {
+    const balls = room?.match?.balls || [];
+    const cue = balls.find(ball => ball.isCue && !ball.pocketed);
+    if (!cue) return false;
+    const { hit } = this.findAimTarget(cue, balls, angle);
+    if (!hit) return true;
+    const group = room.players?.[room.match.turnIndex]?.group;
+    const eightOpen = !!group && !balls.some(ball => ball.type === group && !ball.pocketed);
+    return hit.number === 8 ? eightOpen : !group || hit.type === group;
+  }
+
+  drawEffects(ctx, scale) {
+    const now = performance.now();
+    this.effects = this.effects.filter(effect => now - effect.startedAt < effect.duration);
+    for (const effect of this.effects) {
+      const progress = Math.max(0, Math.min(1, (now - effect.startedAt) / effect.duration));
+      const alpha = (1 - progress) ** 1.35;
+      const impact = effect.kind === 'impact';
+      const color = impact ? '#b8f58a' : '#f05cff';
+      ctx.save(); ctx.globalAlpha = alpha;
+      ctx.strokeStyle = color; ctx.shadowColor = impact ? '#6dffcf' : '#57dcff'; ctx.shadowBlur = 16 / scale;
+      for (let ring = 0; ring < 2; ring += 1) {
+        ctx.lineWidth = (impact ? 3.2 : 2.6) / scale;
+        ctx.beginPath(); ctx.arc(effect.x, effect.y, 5 + progress * (impact ? 58 : 42) + ring * 7, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.lineWidth = 2 / scale;
+      for (const particle of effect.particles) {
+        const start = progress * particle.distance * .58, end = progress * particle.distance;
+        ctx.beginPath();
+        ctx.moveTo(effect.x + Math.cos(particle.angle) * start, effect.y + Math.sin(particle.angle) * start);
+        ctx.lineTo(effect.x + Math.cos(particle.angle) * end, effect.y + Math.sin(particle.angle) * end);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
   }
 
   drawTable(ctx) {
@@ -119,24 +193,26 @@ export class PoolRenderer {
   pocketPoints() { return [[82, 72, 21], [490, 68, 18], [898, 72, 21], [82, 488, 21], [490, 492, 18], [898, 488, 21]]; }
   roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
 
-  drawPrediction(ctx, cue, balls, angle, scale) {
-    const ux = Math.cos(angle), uy = Math.sin(angle), r = cue.radius;
-    let best = 520, hit = null;
-    for (const b of balls) {
-      if (b.isCue || b.pocketed) continue;
-      const dx = b.x - cue.x, dy = b.y - cue.y, along = dx * ux + dy * uy;
-      if (along <= 0) continue;
-      const perp = Math.abs(dx * uy - dy * ux);
-      if (perp < r + b.radius && along < best) { best = along - Math.sqrt(Math.max(0, (r + b.radius) ** 2 - perp ** 2)); hit = b; }
-    }
-    const ex = cue.x + ux * best, ey = cue.y + uy * best;
-    ctx.save(); ctx.setLineDash([8 / scale, 7 / scale]); ctx.lineWidth = 2.4 / scale; ctx.strokeStyle = 'rgba(245,255,242,.9)';
+  drawPrediction(ctx, cue, balls, angle, scale, room) {
+    const ux = Math.cos(angle), uy = Math.sin(angle);
+    const { distance, hit } = this.findAimTarget(cue, balls, angle);
+    const group = room.players?.[room.match.turnIndex]?.group;
+    const eightOpen = !!group && !balls.some(ball => ball.type === group && !ball.pocketed);
+    const illegal = hit && (hit.number === 8 ? !eightOpen : group && hit.type !== group);
+    const color = illegal ? '#ff405c' : '#c6ff9f';
+    const ex = cue.x + ux * distance, ey = cue.y + uy * distance;
+    ctx.save(); ctx.setLineDash([8 / scale, 7 / scale]); ctx.lineWidth = 2.8 / scale; ctx.strokeStyle = color;
+    ctx.shadowColor = color; ctx.shadowBlur = illegal ? 13 / scale : 5 / scale;
     ctx.beginPath(); ctx.moveTo(cue.x, cue.y); ctx.lineTo(ex, ey); ctx.stroke(); ctx.setLineDash([]);
     if (hit) {
-      const nx = (hit.x - ex), ny = (hit.y - ey), n = Math.hypot(nx, ny) || 1;
+      const nx = hit.x - ex, ny = hit.y - ey, n = Math.hypot(nx, ny) || 1;
       const hx = nx / n, hy = ny / n;
-      ctx.strokeStyle = 'rgba(255,232,166,.72)'; ctx.setLineDash([5 / scale, 8 / scale]); ctx.lineWidth = 1.8 / scale; ctx.beginPath(); ctx.moveTo(hit.x, hit.y); ctx.lineTo(hit.x + hx * 100, hit.y + hy * 100); ctx.stroke();
-      ctx.setLineDash([]); ctx.beginPath(); ctx.arc(ex, ey, 4, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,255,.72)'; ctx.fill();
+      ctx.strokeStyle = illegal ? 'rgba(255,64,92,.9)' : 'rgba(139,255,211,.78)';
+      ctx.lineWidth = 2 / scale; ctx.setLineDash([5 / scale, 8 / scale]);
+      ctx.beginPath(); ctx.moveTo(hit.x, hit.y); ctx.lineTo(hit.x + hx * 100, hit.y + hy * 100); ctx.stroke(); ctx.setLineDash([]);
+      const pulse = 1 + Math.sin(performance.now() * .014) * .12;
+      ctx.lineWidth = 2.8 / scale; ctx.beginPath(); ctx.arc(hit.x, hit.y, (hit.radius + 7 / scale) * pulse, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(ex, ey, 4 / scale, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
     }
     ctx.restore();
   }
@@ -210,13 +286,17 @@ export class PoolRenderer {
     const base = ctx.createRadialGradient(x - radius * .38, y - radius * .46, radius * .06, x, y, radius * 1.25);
     base.addColorStop(0, '#fff'); base.addColorStop(.16, color); base.addColorStop(.73, color); base.addColorStop(1, '#171a19'); ctx.fillStyle = base; ctx.fillRect(x-radius, y-radius, radius*2, radius*2);
     if (ball.type === 'stripe') {
-      ctx.fillStyle = '#faf9f1'; ctx.fillRect(x-radius, y-radius * .48, radius*2, radius*.96);
-      const stripe = ctx.createLinearGradient(x, y-radius*.48, x, y+radius*.48); stripe.addColorStop(0, color); stripe.addColorStop(.5, color); stripe.addColorStop(1, color); ctx.fillStyle = stripe; ctx.fillRect(x-radius, y-radius*.32, radius*2, radius*.64);
-      const shade = ctx.createLinearGradient(x, y-radius, x, y+radius); shade.addColorStop(0, 'rgba(255,255,255,.36)'); shade.addColorStop(.45, 'rgba(255,255,255,0)'); shade.addColorStop(1, 'rgba(0,0,0,.34)'); ctx.fillStyle = shade; ctx.fillRect(x-radius, y-radius, radius*2, radius*2);
+      ctx.save(); ctx.translate(x, y); ctx.rotate(ball.rotation || 0);
+      ctx.fillStyle = '#faf9f1'; ctx.fillRect(-radius, -radius * .48, radius * 2, radius * .96);
+      const stripe = ctx.createLinearGradient(0, -radius * .48, 0, radius * .48); stripe.addColorStop(0, color); stripe.addColorStop(.5, color); stripe.addColorStop(1, color); ctx.fillStyle = stripe; ctx.fillRect(-radius, -radius * .32, radius * 2, radius * .64);
+      const shade = ctx.createLinearGradient(0, -radius, 0, radius); shade.addColorStop(0, 'rgba(255,255,255,.36)'); shade.addColorStop(.45, 'rgba(255,255,255,0)'); shade.addColorStop(1, 'rgba(0,0,0,.34)'); ctx.fillStyle = shade; ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
+      ctx.restore();
     }
     if (!ball.isCue && ball.number) {
-      ctx.beginPath(); ctx.fillStyle = '#fffdf5'; ctx.arc(x, y, radius*.39, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#111'; ctx.font = `bold ${Math.max(8, radius*.75)}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(ball.number), x, y + .5);
+      ctx.save(); ctx.translate(x, y); ctx.rotate(ball.rotation || 0);
+      ctx.beginPath(); ctx.fillStyle = '#fffdf5'; ctx.arc(0, 0, radius * .39, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#111'; ctx.font = `bold ${Math.max(8, radius * .75)}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(ball.number), 0, .5);
+      ctx.restore();
     }
     ctx.restore();
     ctx.strokeStyle = 'rgba(255,255,255,.32)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, radius-.5, 0, Math.PI*2); ctx.stroke();

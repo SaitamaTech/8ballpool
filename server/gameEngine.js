@@ -19,6 +19,10 @@ export const BALL_RADIUS = 14;
 export const SHOT_IMPACT_DELAY = 0.12;
 const BASE_SHOT_SPEED = 480;
 const ROLLING_DECELERATION = 80;
+const BALL_RESTITUTION = .94;
+const BALL_CONTACT_FRICTION = .075;
+const BALL_INERTIA_FACTOR = .4;
+const SPIN_DECAY = 2.4;
 const DROP_DURATION_SECONDS = 0.31;
 
 export function randomRoomCode() {
@@ -36,11 +40,11 @@ export function createRack() {
     for (let col = 0; col <= row; col += 1) {
       const number = pattern[index++];
       balls.push({ id: `ball-${number}`, number, isCue: false, type: number === 8 ? 'eight' : number <= 7 ? 'solid' : 'stripe',
-        x: cx + row * rowSpacing, y: cy + (col - row / 2) * ballSpacing, vx: 0, vy: 0, radius: BALL_RADIUS,
+        x: cx + row * rowSpacing, y: cy + (col - row / 2) * ballSpacing, vx: 0, vy: 0, spin: 0, rotation: 0, radius: BALL_RADIUS,
         pocketed: false, pocketedThisTurn: false, visible: true, dropProgress: 0, pocketX: null, pocketY: null });
     }
   }
-  balls.push({ id: 'cue-ball', number: 0, isCue: true, type: 'cue', x: TABLE.headSpot.x, y: TABLE.headSpot.y, vx: 0, vy: 0, radius: BALL_RADIUS,
+  balls.push({ id: 'cue-ball', number: 0, isCue: true, type: 'cue', x: TABLE.headSpot.x, y: TABLE.headSpot.y, vx: 0, vy: 0, spin: 0, rotation: 0, radius: BALL_RADIUS,
     pocketed: false, pocketedThisTurn: false, visible: true, dropProgress: 0, pocketX: null, pocketY: null });
   return balls;
 }
@@ -78,7 +82,7 @@ export function serializeRoom(room, now = Date.now()) {
       shotCount: room.match.shotCount, shotInProgress: room.match.shotInProgress, ballInHand: room.match.ballInHand, foul: room.match.foul,
       timeoutCount: room.match.timeoutCount || 0, lastTimeout: room.match.lastTimeout || null,
       timer: { durationMs: timer.durationMs || TURN_DURATION_MS, running: !!timer.running, remainingMs, turnSerial: timer.turnSerial || 0 },
-      balls: room.match.balls.map(b => ({ id: b.id, number: b.number, isCue: b.isCue, type: b.type, x: +b.x.toFixed(2), y: +b.y.toFixed(2), vx: +b.vx.toFixed(2), vy: +b.vy.toFixed(2),
+      balls: room.match.balls.map(b => ({ id: b.id, number: b.number, isCue: b.isCue, type: b.type, x: +b.x.toFixed(2), y: +b.y.toFixed(2), vx: +b.vx.toFixed(2), vy: +b.vy.toFixed(2), spin: +(b.spin || 0).toFixed(3), rotation: +(b.rotation || 0).toFixed(3),
         radius: b.radius, pocketed: b.pocketed, visible: b.visible, dropProgress: b.dropProgress || 0, pocketX: b.pocketX ?? null, pocketY: b.pocketY ?? null })) } };
 }
 
@@ -132,8 +136,17 @@ function collide(a, b) {
   a.x -= nx * overlap * .51; a.y -= ny * overlap * .51; b.x += nx * overlap * .51; b.y += ny * overlap * .51;
   const rvx = b.vx - a.vx, rvy = b.vy - a.vy, vn = rvx * nx + rvy * ny;
   if (vn >= 0) return;
-  const impulse = -(1 + .94) * vn / 2;
-  a.vx -= impulse * nx; a.vy -= impulse * ny; b.vx += impulse * nx; b.vy += impulse * ny;
+  const normalImpulse = -(1 + BALL_RESTITUTION) * vn / 2;
+  const tx = -ny, ty = nx;
+  const spinA = a.spin || 0, spinB = b.spin || 0;
+  const tangentVelocity = rvx * tx + rvy * ty - a.radius * spinA - b.radius * spinB;
+  const tangentLimit = normalImpulse * BALL_CONTACT_FRICTION;
+  const tangentImpulse = Math.max(-tangentLimit, Math.min(tangentLimit, -tangentVelocity / (2 + 2 / BALL_INERTIA_FACTOR)));
+  const impulseX = normalImpulse * nx + tangentImpulse * tx;
+  const impulseY = normalImpulse * ny + tangentImpulse * ty;
+  a.vx -= impulseX; a.vy -= impulseY; b.vx += impulseX; b.vy += impulseY;
+  a.spin = spinA - tangentImpulse / (BALL_INERTIA_FACTOR * a.radius);
+  b.spin = spinB - tangentImpulse / (BALL_INERTIA_FACTOR * b.radius);
 }
 
 function segmentDistanceSquared(ax, ay, bx, by, px, py) {
@@ -144,7 +157,7 @@ function segmentDistanceSquared(ax, ay, bx, by, px, py) {
 }
 
 /** Marks a moving ball captured when its swept center path intersects a pocket's ball-aware opening. */
-export function detectPocketEntry(ball, fromX = ball.x, fromY = ball.y) {
+export function detectPocketEntry(ball, fromX = ball.x, fromY = ball.y, canPocket = () => true) {
   if (ball.pocketed) return null;
   for (const pocket of TABLE.pockets) {
     const sweep = segmentDistanceSquared(fromX, fromY, ball.x, ball.y, pocket.x, pocket.y);
@@ -152,17 +165,37 @@ export function detectPocketEntry(ball, fromX = ball.x, fromY = ball.y) {
     const captureRadius = pocket.radius + ball.radius * .82;
     const movedTowardPocket = sweep.dx * (pocket.x - fromX) + sweep.dy * (pocket.y - fromY) > 0.0001;
     if (movedTowardPocket && sweep.distanceSquared <= captureRadius * captureRadius) {
+      if (!canPocket(ball)) {
+        const nx = (ball.x - pocket.x) / (Math.hypot(ball.x - pocket.x, ball.y - pocket.y) || 1);
+        const ny = (ball.y - pocket.y) / (Math.hypot(ball.x - pocket.x, ball.y - pocket.y) || 1);
+        const normalSpeed = ball.vx * nx + ball.vy * ny;
+        if (normalSpeed < 0) {
+          ball.vx -= (1 + .72) * normalSpeed * nx;
+          ball.vy -= (1 + .72) * normalSpeed * ny;
+        }
+        ball.x = pocket.x + nx * (captureRadius + .5);
+        ball.y = pocket.y + ny * (captureRadius + .5);
+        return pocket;
+      }
       ball.pocketed = true;
       ball.pocketedThisTurn = true;
       ball.dropProgress = 0.001;
       ball.pocketX = pocket.x;
       ball.pocketY = pocket.y;
+      ball.pocketEntryPosition = { x: fromX, y: fromY };
       ball.vx *= .12;
       ball.vy *= .12;
       return pocket;
     }
   }
   return null;
+}
+
+function canPocketForCurrentTurn(room, ball) {
+  if (ball.isCue) return true;
+  const match = room.match, player = room.players[match.turnIndex];
+  if (ball.number === 8) return !!player.group && !match.balls.some(candidate => candidate.type === player.group && !candidate.pocketed);
+  return !player.group || ball.type === player.group;
 }
 
 function hasCushionOpening(axis, ball, coordinate) {
@@ -223,7 +256,10 @@ export function updateRoomPhysics(room, dt = 1 / 60, now = Date.now()) {
       const nextSpeed = Math.max(0, speed - ROLLING_DECELERATION * step);
       if (nextSpeed === 0) b.vx = b.vy = 0;
       else { b.vx *= nextSpeed / speed; b.vy *= nextSpeed / speed; }
-      if (!detectPocketEntry(b, fromX, fromY)) rail(b);
+      b.rotation = ((b.rotation || 0) + (b.spin || 0) * step) % (Math.PI * 2);
+      b.spin = (b.spin || 0) * Math.exp(-SPIN_DECAY * step);
+      if (Math.abs(b.spin) < .01) b.spin = 0;
+      if (!detectPocketEntry(b, fromX, fromY, candidate => canPocketForCurrentTurn(room, candidate))) rail(b);
     }
     for (let i = 0; i < balls.length; i += 1) for (let j = i + 1; j < balls.length; j += 1) {
       const a = balls[i], b = balls[j];
@@ -250,6 +286,11 @@ export function applyShot(room, socketId, payload = {}, now = Date.now()) {
   if (!cue || cue.pocketed) return { ok: false, error: 'The cue ball is not available.' };
   const angle = Number(payload.angle ?? 0), rawPower = Number(payload.power ?? .45);
   if (!Number.isFinite(angle) || !Number.isFinite(rawPower)) return { ok: false, error: 'Invalid shot values.' };
+  const target = firstBallOnRay(cue, room.match.balls, angle);
+  const player = room.players[playerIndex];
+  const ownBallsRemain = player.group && room.match.balls.some(ball => ball.type === player.group && !ball.pocketed);
+  if (target?.number === 8 && (!player.group || ownBallsRemain)) return { ok: false, error: 'The 8-ball is locked until your group is cleared.' };
+  if (target && target.number !== 8 && player.group && target.type !== player.group) return { ok: false, error: 'Aim at one of your remaining balls.' };
   const power = Math.min(1, Math.max(.08, rawPower));
   const speed = BASE_SHOT_SPEED * Math.sqrt(power);
   stopTurnTimer(room.match, now);
@@ -258,6 +299,22 @@ export function applyShot(room, socketId, payload = {}, now = Date.now()) {
   room.match.shotInProgress = true; room.match.shotCount += 1; room.match.foul = false; room.match.ballInHand = false; room.match.firstContact = false;
   room.match.message = `${room.players[playerIndex].name} shoots.`; room.match.lastEvent = 'Cue ball in motion.';
   room.match.balls.forEach(b => { b.pocketedThisTurn = false; }); return { ok: true };
+}
+
+function firstBallOnRay(cue, balls, angle) {
+  const ux = Math.cos(angle), uy = Math.sin(angle);
+  let target = null, firstDistance = Infinity;
+  for (const ball of balls) {
+    if (ball.isCue || ball.pocketed) continue;
+    const dx = ball.x - cue.x, dy = ball.y - cue.y;
+    const along = dx * ux + dy * uy;
+    if (along <= 0) continue;
+    const perpendicular = Math.abs(dx * uy - dy * ux), combinedRadius = cue.radius + ball.radius;
+    if (perpendicular >= combinedRadius) continue;
+    const distance = along - Math.sqrt(combinedRadius ** 2 - perpendicular ** 2);
+    if (distance < firstDistance) { firstDistance = distance; target = ball; }
+  }
+  return target;
 }
 
 function assignGroups(room, ball, current) {
@@ -279,6 +336,18 @@ function finalizeShot(room, now = Date.now()) {
   }
   const legal = pocketed.filter(b => !b.isCue && b.number !== 8);
   if (!cueScratch && match.firstContact && !current.group && legal.length) assignGroups(room, legal[0], current);
+  const returnedBalls = current.group ? legal.filter(ball => ball.type !== current.group) : [];
+  for (const ball of returnedBalls) {
+    const position = ball.pocketEntryPosition;
+    ball.pocketed = false; ball.pocketedThisTurn = false; ball.visible = true; ball.dropProgress = 0;
+    ball.pocketX = null; ball.pocketY = null; ball.vx = 0; ball.vy = 0; ball.spin = 0;
+    if (position) { ball.x = position.x; ball.y = position.y; }
+    delete ball.pocketEntryPosition;
+  }
+  if (returnedBalls.length && !cueScratch) {
+    match.foul = true; match.message = `${current.name} targeted an opponent's ball. It was returned; turn passes.`;
+    match.lastEvent = 'Opponent ball returned after an illegal pot.'; passTurn(room, now); return;
+  }
   const own = legal.some(b => b.type === current.group);
   if (cueScratch) {
     match.message = `${current.name} scratched — ball in hand.`; match.lastEvent = 'Cue ball pocketed.'; match.ballInHand = true;
