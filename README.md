@@ -1,6 +1,6 @@
-# Local 8 Ball Pool
+# Saitama 8 Ball Pool Game
 
-A browser-based, two-player 8-ball pool game for a local Wi-Fi network. A Node.js host serves the client and remains authoritative for shots, physics, pocket events, and group assignment. Gameplay does not depend on an internet service.
+A browser-based 8-ball pool game with room-code multiplayer, trick-shot challenges, and a computer opponent. The Node.js server remains authoritative for shots, physics, pocket events, and group assignment. Run it on local Wi-Fi or deploy it to let players connect over the internet.
 
 ## What changed
 
@@ -22,11 +22,11 @@ A browser-based, two-player 8-ball pool game for a local Wi-Fi network. A Node.j
 ## Architecture
 
 - Client: Vite, vanilla JavaScript, Canvas renderer (`src/`)
-- Local multiplayer: Express and Socket.IO (`server/`)
+- Multiplayer: Express and Socket.IO (`server/`)
 - Authoritative game state and physics: `server/gameEngine.js`
 - Automated tests: Vitest (`tests/`)
 
-The client renders synchronized state; it does not decide the official shot result. No remote gameplay service is used.
+The client renders synchronized state; it does not decide the official shot result. The browser connects to Socket.IO on the same origin, so the same room-code flow works locally and from a public deployment.
 
 ## Run on a local Wi-Fi network
 
@@ -48,6 +48,12 @@ The client renders synchronized state; it does not decide the official shot resu
 
 For development, `npm run dev` starts Vite and the local server separately. Open the Vite URL on the host; for phones, use the host's LAN address and the Vite port printed by the command. The production server (`npm run start`) serves the built client from the same port as the game server.
 
+## Play over the internet
+
+The included [`render.yaml`](render.yaml) configures a single Render web service that builds the client and runs the Socket.IO server. Use the [Render deploy link](https://render.com/deploy?repo=https://github.com/SaitamaTech/8ballpool), connect your GitHub account, choose `SaitamaTech/8ballpool`, and deploy the Blueprint. When Render finishes, open the public `onrender.com` URL; players can create and join rooms from different networks using the same room-code flow.
+
+The free Render plan may sleep when idle, so the first visit after inactivity can take a little longer. Rooms are held in server memory and are lost if the service restarts. Keep a single service instance for this version; running multiple instances would require shared room state and a Socket.IO adapter.
+
 ## Controls
 
 - Drag anywhere on the cloth to aim; releasing the pointer does not shoot.
@@ -57,7 +63,7 @@ For development, `npm run dev` starts Vite and the local server separately. Open
 
 ## Automated verification performed
 
-- `npm test`: **17 tests passed**, including all six pocket approaches, ball collision exclusion, timer pause/timeout, reconnect recovery, and legal 8-ball resolution.
+- `npm test`: **36 tests passed**, including pocket approaches, foul penalties and cue placement, timer timeout, reconnect recovery, and legal 8-ball resolution.
 - `npm run build`: **passed**.
 - Local HTTP smoke test: built app and Socket.IO endpoint served successfully.
 - Two-client Socket.IO smoke test: room creation/join, synchronized 30-second timer, one strike event per client, shot-state synchronization, and timer pause during shot passed.
@@ -84,6 +90,6 @@ These checks are not a substitute for testing on physical Android phones.
 
 ## Known limits
 
-- Contact-point spin/English, full official 8-ball rule edge cases (including call-shot/break variants), and ball-in-hand drag placement are not implemented in this pass.
+- Contact-point spin/English and full official 8-ball rule edge cases (including call-shot/break variants) are not implemented in this pass.
 - The predicted object-ball path is approximate and does not promise a pocket; actual outcomes come from server physics.
 - No two physical Android phones were available for a same-router/offline Wi-Fi test; transport, local server behavior, and offline asset bundling were validated locally.
