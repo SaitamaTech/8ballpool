@@ -33,7 +33,10 @@ app.innerHTML = `
     </div>
     <div id="settings-screen" class="screen hidden"><div class="panel"><h2>Settings</h2><label>Graphics<select id="graphics-mode"><option value="balanced">Balanced</option><option value="performance">Performance</option></select></label><button class="primary" data-action="back">Back</button></div></div>
     <div id="howto-screen" class="screen hidden"><div class="panel"><h2>How to play</h2><ul><li>Create a room on the same Wi-Fi; the second phone joins with its code.</li><li>Drag on the table to set shot direction. Pointer release only ends aiming; it never fires.</li><li>Use the separate power slider to pull the cue back and choose the real shot strength.</li><li>Tap Shoot to request a single server-validated strike. Cancel charge returns to a soft setup.</li><li>The game server simulates the shot and synchronizes its impact and result.</li></ul><button class="primary" data-action="back">Back</button></div></div>
-  </div>`;
+  </div>
+  <dialog id="app-dialog" class="app-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-message">
+    <div class="dialog-panel"><div class="dialog-ball" aria-hidden="true">8</div><p class="eyebrow">8 Ball Pool</p><h2 id="dialog-title">Message</h2><p id="dialog-message"></p><div class="dialog-actions"><button id="dialog-cancel" class="ghost">Cancel</button><button id="dialog-confirm" class="primary">OK</button></div></div>
+  </dialog>`;
 
 const canvas = document.getElementById('game-canvas');
 const renderer = new PoolRenderer(canvas);
@@ -41,6 +44,11 @@ const powerSlider = document.getElementById('power-slider');
 const shootButton = document.getElementById('shoot-btn');
 const cancelButton = document.getElementById('cancel-shot-btn');
 const endGameButton = document.getElementById('end-game-btn');
+const appDialog = document.getElementById('app-dialog');
+const dialogTitle = document.getElementById('dialog-title');
+const dialogMessage = document.getElementById('dialog-message');
+const dialogCancel = document.getElementById('dialog-cancel');
+const dialogConfirm = document.getElementById('dialog-confirm');
 const screens = Object.fromEntries(['menu','host','join','lobby','game','settings','howto'].map(n => [n, document.getElementById(`${n}-screen`)]));
 let animationFrame = null;
 function animateGame() {
@@ -51,6 +59,25 @@ function animateGame() {
 }
 function scheduleGameAnimation() {
   if (animationFrame === null && state.screen === 'game') animationFrame = requestAnimationFrame(animateGame);
+}
+let dialogResolve = null;
+function closeAppDialog(result) {
+  if (appDialog.open) appDialog.close();
+  const resolve = dialogResolve;
+  dialogResolve = null;
+  resolve?.(result);
+}
+function showAppDialog({ title, message, confirmation = false }) {
+  if (appDialog.open) closeAppDialog(false);
+  dialogTitle.textContent = title;
+  dialogMessage.textContent = message;
+  appDialog.classList.toggle('confirmation', confirmation);
+  dialogCancel.hidden = !confirmation;
+  dialogConfirm.textContent = confirmation ? 'End Game' : 'Got it';
+  const result = new Promise(resolve => { dialogResolve = resolve; });
+  appDialog.showModal();
+  dialogConfirm.focus();
+  return result;
 }
 function showScreen(name) {
   if (state.screen === name) return;
@@ -200,8 +227,11 @@ function cancelCharge() {
 }
 function endGame() {
   if (!state.room) return;
-  if (state.room.status !== 'finished' && !window.confirm('End this game and return both players to the lobby?')) return;
-  socket.emit('end_match', { code: state.room.code });
+  const code = state.room.code;
+  const confirmEnd = state.room.status === 'finished'
+    ? Promise.resolve(true)
+    : showAppDialog({ title: 'End this game?', message: 'Both players will return to the room.', confirmation: true });
+  confirmEnd.then(confirmed => { if (confirmed) socket.emit('end_match', { code }); });
 }
 
 canvas.addEventListener('pointerdown', event => {
@@ -223,6 +253,10 @@ powerSlider.addEventListener('input', event => setPower(event.target.value));
 shootButton.addEventListener('click', shoot);
 cancelButton.addEventListener('click', cancelCharge);
 endGameButton.addEventListener('click', endGame);
+dialogConfirm.addEventListener('click', () => closeAppDialog(true));
+dialogCancel.addEventListener('click', () => closeAppDialog(false));
+appDialog.addEventListener('cancel', event => { event.preventDefault(); closeAppDialog(false); });
+appDialog.addEventListener('click', event => { if (event.target === appDialog) closeAppDialog(false); });
 
 for (const [action, screen] of [['host','host'],['join','join'],['settings','settings'],['howto','howto']]) document.querySelectorAll(`[data-action="${action}"]`).forEach(b => b.addEventListener('click', () => showScreen(screen)));
 document.querySelectorAll('[data-action="back"]').forEach(b => b.addEventListener('click', () => showScreen(state.room ? 'lobby' : 'menu')));
@@ -272,8 +306,8 @@ socket.on('state_update', room => {
   else if (room.status === 'waiting') showScreen('lobby');
   render();
 });
-socket.on('room_error', message => window.alert(message));
-socket.on('state_error', message => { state.shotRequestPending = false; updateControls(); window.alert(message); });
+socket.on('room_error', message => showAppDialog({ title: 'Room update', message }));
+socket.on('state_error', message => { state.shotRequestPending = false; updateControls(); showAppDialog({ title: 'Shot unavailable', message }); });
 window.addEventListener('resize', () => { renderer.resize(); render(); });
 window.addEventListener('orientationchange', () => requestAnimationFrame(() => { renderer.resize(); render(); }));
 window.setInterval(updateTimerHud, 100);

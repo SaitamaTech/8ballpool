@@ -17,7 +17,7 @@ export const TABLE = {
 };
 export const BALL_RADIUS = 14;
 export const SHOT_IMPACT_DELAY = 0.12;
-const BASE_SHOT_SPEED = 480;
+const BASE_SHOT_SPEED = 600;
 const ROLLING_DECELERATION = 80;
 const BALL_RESTITUTION = .94;
 const BALL_CONTACT_FRICTION = .075;

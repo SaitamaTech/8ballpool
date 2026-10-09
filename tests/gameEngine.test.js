@@ -174,13 +174,13 @@ describe('game rules', () => {
     expect(applyShot(room, 'socket-1', { angle: 0, power: 0.25 }).ok).toBe(true);
     const cue = room.match.balls.find(ball => ball.isCue);
     expect(cue.vx).toBe(0);
-    expect(room.match.pendingShot.vx).toBeCloseTo(240);
+    expect(room.match.pendingShot.vx).toBeCloseTo(300);
     updateRoomPhysics(room, 4 / 60);
     expect(cue.vx).toBe(0);
     expect(applyShot(room, 'socket-1', { angle: 0, power: 1 }).ok).toBe(false);
     updateRoomPhysics(room, 4 / 60);
-    expect(cue.vx).toBeGreaterThan(238);
-    expect(cue.vx).toBeLessThan(240);
+    expect(cue.vx).toBeGreaterThan(298);
+    expect(cue.vx).toBeLessThan(300);
   });
 
   test('default power carries the cue into the rack and transfers speed on impact', () => {

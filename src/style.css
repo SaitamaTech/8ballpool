@@ -28,6 +28,17 @@ h1 { font: 900 clamp(2.5rem, 5vw, 4rem)/1.02 'Arial Black', 'Trebuchet MS', sans
 .ghost { background: transparent; color: var(--muted); border: 1px solid rgba(255,255,255,.1); }
 .danger { background:linear-gradient(120deg,rgba(126,36,45,.92),rgba(79,24,34,.96)); color:#ffd3c5; border:1px solid rgba(255,145,119,.48); min-height:48px; padding:0 16px; font-weight:800; box-shadow:0 6px 22px rgba(123,28,42,.2),inset 0 1px rgba(255,255,255,.12); }
 .panel { background: var(--panel); border: 1px solid rgba(255,255,255,.09); border-radius: 20px; box-shadow: 0 20px 45px var(--shadow); padding: 24px; }
+.app-dialog { width:min(440px,calc(100vw - 28px)); max-width:none; padding:0; overflow:visible; border:0; color:var(--text); background:transparent; }
+.app-dialog::backdrop { background:rgba(1,8,6,.78); backdrop-filter:blur(9px) saturate(.75); animation:dialog-backdrop-in .2s ease-out both; }
+.app-dialog[open] { animation:dialog-card-in .32s cubic-bezier(.16,.9,.24,1.2) both; }
+.dialog-panel { position:relative; overflow:hidden; padding:27px; border:1px solid rgba(166,255,204,.32); border-radius:19px; background:radial-gradient(ellipse at 100% 0,rgba(77,220,157,.2),transparent 44%),linear-gradient(145deg,rgba(17,45,35,.99),rgba(5,19,15,.99)); box-shadow:0 26px 90px rgba(0,0,0,.68),0 0 42px rgba(69,229,160,.13),inset 0 1px rgba(255,255,255,.12); }
+.dialog-ball { display:grid; place-items:center; width:44px; aspect-ratio:1; margin-bottom:17px; border:2px solid rgba(255,255,255,.72); border-radius:50%; background:radial-gradient(circle at 34% 26%,#565c5b,#080b0a 67%); color:#f7f8ef; font-size:1.1rem; font-weight:950; box-shadow:0 0 22px rgba(102,255,195,.22),inset 0 0 8px rgba(255,255,255,.17); animation:dialog-ball-in .48s cubic-bezier(.2,.85,.3,1.4) both; }
+.dialog-panel .eyebrow { color:#a9f6d0; }
+.dialog-panel h2 { margin:0 0 9px; font-size:1.45rem; }
+.dialog-panel > p:not(.eyebrow) { color:#d3e2d8; line-height:1.55; overflow-wrap:anywhere; }
+.dialog-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:23px; }
+.app-dialog:not(.confirmation) .dialog-actions { grid-template-columns:1fr; }
+.dialog-actions button { min-height:48px; }
 label { display: block; color: var(--muted); margin: 14px 0; font-size: .94rem; }
 input,select { width: 100%; margin-top: 8px; background: rgba(12,27,22,.95); border: 1px solid rgba(255,255,255,.12); padding: 12px 14px; border-radius: 10px; color: var(--text); }
 .lobby-box { display: grid; gap: 18px; }
@@ -80,6 +91,9 @@ input,select { width: 100%; margin-top: 8px; background: rgba(12,27,22,.95); bor
 button.primary:not(:disabled) { animation: button-surge 1.8s ease-in-out infinite; }
 button:active:not(:disabled) { transform:scale(.96); }
 @keyframes screen-arrive { from { opacity:0; } to { opacity:1; } }
+@keyframes dialog-backdrop-in { from { opacity:0; } to { opacity:1; } }
+@keyframes dialog-card-in { from { opacity:0; transform:translateY(16px) scale(.94); } to { opacity:1; transform:translateY(0) scale(1); } }
+@keyframes dialog-ball-in { from { opacity:0; transform:rotate(-90deg) scale(.4); } to { opacity:1; transform:rotate(0) scale(1); } }
 @keyframes turn-charge { 0%,100% { box-shadow:0 0 0 1px rgba(150,242,196,.14),inset 0 0 14px rgba(76,207,153,.05); } 50% { box-shadow:0 0 0 2px rgba(150,242,196,.32),0 0 20px rgba(76,207,153,.17),inset 0 0 20px rgba(76,207,153,.11); } }
 @keyframes button-surge { 0%,100% { filter:saturate(1); box-shadow:0 7px 20px rgba(73,199,154,.16),inset 0 1px rgba(255,255,255,.38); } 50% { filter:saturate(1.32) brightness(1.06); box-shadow:0 0 25px rgba(110,255,190,.34),inset 0 1px rgba(255,255,255,.6); } }
 @keyframes invalid-target { from { opacity:.7; } to { opacity:1; } }
