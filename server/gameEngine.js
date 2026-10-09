@@ -17,6 +17,7 @@ export const TABLE = {
 };
 export const BALL_RADIUS = 14;
 export const SHOT_IMPACT_DELAY = 0.12;
+const BASE_SHOT_SPEED = 480;
 const ROLLING_DECELERATION = 80;
 const DROP_DURATION_SECONDS = 0.31;
 
@@ -113,6 +114,14 @@ export function startMatch(room) {
   room.players.forEach(p => { p.group = null; p.score = 0; });
   room.match.message = 'Break shot — open table'; room.match.lastEvent = 'Starting the match.';
   startTurnTimer(room.match);
+  return { ok: true };
+}
+
+export function endMatch(room, socketId) {
+  if (!room?.players.some(player => player.id === socketId)) return { ok: false, error: 'Player is not in this room.' };
+  if (!['playing', 'paused', 'finished'].includes(room.status)) return { ok: false, error: 'There is no active match to end.' };
+  room.status = 'waiting'; room.resumeStatus = null; room.match = createGameState();
+  room.players.forEach(player => { player.group = null; player.score = 0; });
   return { ok: true };
 }
 
@@ -242,7 +251,7 @@ export function applyShot(room, socketId, payload = {}, now = Date.now()) {
   const angle = Number(payload.angle ?? 0), rawPower = Number(payload.power ?? .45);
   if (!Number.isFinite(angle) || !Number.isFinite(rawPower)) return { ok: false, error: 'Invalid shot values.' };
   const power = Math.min(1, Math.max(.08, rawPower));
-  const speed = 360 * Math.sqrt(power);
+  const speed = BASE_SHOT_SPEED * Math.sqrt(power);
   stopTurnTimer(room.match, now);
   cue.vx = 0; cue.vy = 0;
   room.match.pendingShot = { vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, remaining: SHOT_IMPACT_DELAY };

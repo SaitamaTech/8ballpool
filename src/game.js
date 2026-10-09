@@ -6,6 +6,13 @@ export class PoolRenderer {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.cueStrike = null;
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    this.tableCanvas = document.createElement('canvas');
+    this.tableCanvas.width = Math.floor(WORLD_W * ratio);
+    this.tableCanvas.height = Math.floor(WORLD_H * ratio);
+    const tableContext = this.tableCanvas.getContext('2d');
+    tableContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+    this.drawTable(tableContext);
     this.resize();
   }
 
@@ -44,11 +51,11 @@ export class PoolRenderer {
     bg.addColorStop(0, '#173b2b'); bg.addColorStop(1, '#06120e');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, L.width, L.height);
     ctx.save(); ctx.translate(L.ox, L.oy); ctx.scale(L.scale, L.scale);
-    this.drawTable(ctx);
+    ctx.drawImage(this.tableCanvas, 0, 0, this.tableCanvas.width, this.tableCanvas.height, 0, 0, WORLD_W, WORLD_H);
     const balls = room.match?.balls || [];
     if (aim && room.match?.status === 'playing' && !room.match?.shotInProgress) {
       const cue = balls.find(b => b.isCue && !b.pocketed);
-      if (cue) this.drawPrediction(ctx, cue, balls, aim.angle);
+      if (cue) this.drawPrediction(ctx, cue, balls, aim.angle, L.scale);
     }
     for (const ball of balls) if (!ball.pocketed || (ball.dropProgress > 0 && ball.dropProgress < 1)) this.drawBall(ctx, ball);
     if (aim && room.match?.status === 'playing' && !room.match?.shotInProgress) {
@@ -112,7 +119,7 @@ export class PoolRenderer {
   pocketPoints() { return [[82, 72, 21], [490, 68, 18], [898, 72, 21], [82, 488, 21], [490, 492, 18], [898, 488, 21]]; }
   roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
 
-  drawPrediction(ctx, cue, balls, angle) {
+  drawPrediction(ctx, cue, balls, angle, scale) {
     const ux = Math.cos(angle), uy = Math.sin(angle), r = cue.radius;
     let best = 520, hit = null;
     for (const b of balls) {
@@ -123,12 +130,12 @@ export class PoolRenderer {
       if (perp < r + b.radius && along < best) { best = along - Math.sqrt(Math.max(0, (r + b.radius) ** 2 - perp ** 2)); hit = b; }
     }
     const ex = cue.x + ux * best, ey = cue.y + uy * best;
-    ctx.save(); ctx.setLineDash([8, 7]); ctx.lineWidth = 1.6; ctx.strokeStyle = 'rgba(245,255,242,.57)';
+    ctx.save(); ctx.setLineDash([8 / scale, 7 / scale]); ctx.lineWidth = 2.4 / scale; ctx.strokeStyle = 'rgba(245,255,242,.9)';
     ctx.beginPath(); ctx.moveTo(cue.x, cue.y); ctx.lineTo(ex, ey); ctx.stroke(); ctx.setLineDash([]);
     if (hit) {
       const nx = (hit.x - ex), ny = (hit.y - ey), n = Math.hypot(nx, ny) || 1;
       const hx = nx / n, hy = ny / n;
-      ctx.strokeStyle = 'rgba(255,232,166,.34)'; ctx.setLineDash([5, 8]); ctx.beginPath(); ctx.moveTo(hit.x, hit.y); ctx.lineTo(hit.x + hx * 100, hit.y + hy * 100); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,232,166,.72)'; ctx.setLineDash([5 / scale, 8 / scale]); ctx.lineWidth = 1.8 / scale; ctx.beginPath(); ctx.moveTo(hit.x, hit.y); ctx.lineTo(hit.x + hx * 100, hit.y + hy * 100); ctx.stroke();
       ctx.setLineDash([]); ctx.beginPath(); ctx.arc(ex, ey, 4, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,255,.72)'; ctx.fill();
     }
     ctx.restore();

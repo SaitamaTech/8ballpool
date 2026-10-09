@@ -7,7 +7,7 @@ const socket = io({ autoConnect: true, transports: ['websocket'] });
 const state = {
   screen: 'menu', room: null, aim: null, myPlayerId: null, localName: '', dragging: false,
   pointerId: null, shotRequestPending: false, playedShots: new Set(), pocketedIds: new Set(), lastRoomCode: null, lastShotCount: 0,
-  timerSnapshotMs: 30_000, timerSnapshotAt: performance.now(),
+  timerSnapshotMs: 30_000, timerSnapshotAt: performance.now(), roomReceivedAt: performance.now(),
 };
 const sounds = { cue: new Audio('/cue-strike.wav'), pocket: new Audio('/pocket-drop.wav') };
 function playSound(kind, volume) {
@@ -19,19 +19,19 @@ function playSound(kind, volume) {
 
 app.innerHTML = `
   <div class="app-shell">
-    <div id="menu-screen" class="screen active"><div class="title-wrap"><p class="eyebrow">Offline Wi-Fi Multiplayer</p><h1>Local 8 Ball Pool</h1><p class="subtitle">A table worth taking your time over.</p></div><div class="menu-grid"><button class="primary" data-action="host">Host Game</button><button class="secondary" data-action="join">Join Game</button><button class="secondary" data-action="settings">Settings</button><button class="secondary" data-action="howto">How to Play</button></div></div>
-    <div id="host-screen" class="screen hidden"><div class="panel"><h2>Host a local room</h2><label>Player name<input id="host-name" value="Host Player" maxlength="18" /></label><button id="host-btn" class="primary">Create Room</button><button class="ghost" data-action="back">Back</button></div></div>
+    <div id="menu-screen" class="screen active"><div class="title-wrap"><p class="eyebrow">Multiplayer Pool</p><h1>8 Ball Pool</h1><p class="subtitle">Rack up. Aim true. Sink the eight.</p></div><div class="menu-grid"><button class="primary" data-action="host">Create Game</button><button class="secondary" data-action="join">Join Game</button><button class="secondary" data-action="settings">Settings</button><button class="secondary" data-action="howto">How to Play</button></div></div>
+    <div id="host-screen" class="screen hidden"><div class="panel"><h2>Create a room</h2><label>Player name<input id="host-name" value="Player 1" maxlength="18" /></label><button id="host-btn" class="primary">Create Room</button><button class="ghost" data-action="back">Back</button></div></div>
     <div id="join-screen" class="screen hidden"><div class="panel"><h2>Join a room</h2><label>Player name<input id="join-name" value="Guest Player" maxlength="18" /></label><label>Room code<input id="room-code" placeholder="ABCD1" maxlength="10" /></label><button id="join-btn" class="primary">Join</button><button class="ghost" data-action="back">Back</button></div></div>
-    <div id="lobby-screen" class="screen hidden"><div class="panel lobby-box"><p class="eyebrow">Local room</p><h2 id="room-code-label">Room</h2><div class="room-meta"><p>Share the room code with a player on the same Wi-Fi network.</p><p>Internet access is not required for gameplay.</p></div><div id="players-list" class="players-list"></div><div class="lobby-actions"><button id="start-match-btn" class="primary">Start Match</button><button class="ghost" data-action="back">Back</button></div></div></div>
+    <div id="lobby-screen" class="screen hidden"><div class="panel lobby-box"><p class="eyebrow">Game room</p><h2 id="room-code-label">Room</h2><div class="room-meta"><p>Share the room code with a player on the same Wi-Fi network.</p><p>Play head-to-head in real time.</p></div><div id="players-list" class="players-list"></div><div class="lobby-actions"><button id="start-match-btn" class="primary">Start Match</button><button class="ghost" data-action="back">Back</button></div></div></div>
     <div id="game-screen" class="screen hidden">
       <div class="hud header-row"><div><p class="eyebrow">Room</p><h3 id="hud-code">—</h3></div><div><p class="eyebrow">At the table</p><h3 id="turn-label">—</h3></div><div><p class="eyebrow">Match status</p><h3 id="status-label">Waiting</h3></div><div class="timer-wrap"><div id="timer-ring" class="timer-ring" role="timer" aria-label="30 seconds remaining"><span id="timer-digits">30</span></div><div class="timer-meta"><p class="eyebrow">Shot clock</p><h3 id="timer-player">Waiting</h3></div></div></div>
       <div class="players-hud"><div id="player-card-0" class="player-card"><span id="player-0-name">Player 1</span><b id="player-0-group">OPEN TABLE</b><small id="player-0-balls">Groups not assigned</small></div><div id="connection-label" class="connection"><i></i> Connecting</div><div id="player-card-1" class="player-card"><span id="player-1-name">Player 2</span><b id="player-1-group">OPEN TABLE</b><small id="player-1-balls">Groups not assigned</small></div></div>
       <div class="table-wrap"><canvas id="game-canvas" width="980" height="560" aria-label="Pool table. Drag to aim; dragging does not shoot." ></canvas></div>
-      <div class="controls-panel"><div class="power-control"><label for="power-slider"><span>Shot power</span><strong id="power-readout">42%</strong></label><input id="power-slider" type="range" min="8" max="100" value="42" aria-label="Shot power, applied to the cue pull-back" /><div class="power-track"><i id="power-meter"></i></div><div class="power-scale"><span>SOFT</span><span>FIRM</span></div></div><div class="shot-actions"><button id="cancel-shot-btn" class="ghost">Cancel charge</button><button id="shoot-btn" class="primary">Shoot</button></div></div>
+      <div class="controls-panel"><div class="power-control"><label for="power-slider"><span>Shot power</span><strong id="power-readout">42%</strong></label><input id="power-slider" type="range" min="8" max="100" value="42" aria-label="Shot power, applied to the cue pull-back" /><div class="power-track"><i id="power-meter"></i></div><div class="power-scale"><span>SOFT</span><span>FIRM</span></div></div><div class="game-actions"><div class="shot-actions"><button id="cancel-shot-btn" class="ghost">Cancel charge</button><button id="shoot-btn" class="primary">Shoot</button></div><button id="end-game-btn" class="danger">End Game</button></div></div>
       <p id="control-hint" class="control-hint">Drag on the table to aim. Set power separately; release never shoots. Tap Shoot to strike.</p>
     </div>
     <div id="settings-screen" class="screen hidden"><div class="panel"><h2>Settings</h2><label>Graphics<select id="graphics-mode"><option value="balanced">Balanced</option><option value="performance">Performance</option></select></label><button class="primary" data-action="back">Back</button></div></div>
-    <div id="howto-screen" class="screen hidden"><div class="panel"><h2>How to play</h2><ul><li>Host a room on the same Wi-Fi; the second phone joins with its code.</li><li>Drag on the table to set shot direction. Pointer release only ends aiming; it never fires.</li><li>Use the separate power slider to pull the cue back and choose the real shot strength.</li><li>Tap Shoot to request a single server-validated strike. Cancel charge returns to a soft setup.</li><li>The local server simulates the shot and synchronizes its impact and result.</li></ul><button class="primary" data-action="back">Back</button></div></div>
+    <div id="howto-screen" class="screen hidden"><div class="panel"><h2>How to play</h2><ul><li>Create a room on the same Wi-Fi; the second phone joins with its code.</li><li>Drag on the table to set shot direction. Pointer release only ends aiming; it never fires.</li><li>Use the separate power slider to pull the cue back and choose the real shot strength.</li><li>Tap Shoot to request a single server-validated strike. Cancel charge returns to a soft setup.</li><li>The game server simulates the shot and synchronizes its impact and result.</li></ul><button class="primary" data-action="back">Back</button></div></div>
   </div>`;
 
 const canvas = document.getElementById('game-canvas');
@@ -39,12 +39,23 @@ const renderer = new PoolRenderer(canvas);
 const powerSlider = document.getElementById('power-slider');
 const shootButton = document.getElementById('shoot-btn');
 const cancelButton = document.getElementById('cancel-shot-btn');
+const endGameButton = document.getElementById('end-game-btn');
 const screens = Object.fromEntries(['menu','host','join','lobby','game','settings','howto'].map(n => [n, document.getElementById(`${n}-screen`)]));
+let animationFrame = null;
+function animateGame() {
+  animationFrame = null;
+  if (state.screen !== 'game') return;
+  if (state.room?.status === 'playing') render();
+  animationFrame = requestAnimationFrame(animateGame);
+}
+function scheduleGameAnimation() {
+  if (animationFrame === null && state.screen === 'game') animationFrame = requestAnimationFrame(animateGame);
+}
 function showScreen(name) {
   if (state.screen === name) return;
   Object.entries(screens).forEach(([key, el]) => { el.classList.toggle('active', key === name); el.classList.toggle('hidden', key !== name); });
   state.screen = name;
-  if (name === 'game') requestAnimationFrame(() => renderer.resize());
+  if (name === 'game') requestAnimationFrame(() => { renderer.resize(); scheduleGameAnimation(); });
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function activePlayer(room = state.room) { return room?.players?.[room.match.turnIndex] || null; }
@@ -55,13 +66,20 @@ function render() {
   if (!state.room) return;
   const localTurn = activePlayer()?.id === socket.id;
   const canAim = localTurn && state.room.status === 'playing' && !state.room.match.shotInProgress && !state.shotRequestPending;
-  renderer.draw(state.room, canAim ? state.aim : null);
+  const elapsed = state.room.status === 'playing' ? Math.min((performance.now() - state.roomReceivedAt) / 1000, 1 / 30) : 0;
+  const displayRoom = elapsed > 0 ? {
+    ...state.room,
+    match: { ...state.room.match, balls: state.room.match.balls.map(ball => ball.pocketed ? ball : { ...ball, x: ball.x + ball.vx * elapsed, y: ball.y + ball.vy * elapsed }) },
+  } : state.room;
+  renderer.draw(displayRoom, canAim ? state.aim : null);
 }
 function updateControls() {
   const enabled = canControl();
   powerSlider.disabled = !enabled;
   shootButton.disabled = !enabled || !state.aim;
   cancelButton.disabled = !enabled || !state.aim || state.aim.power <= .08001;
+  endGameButton.disabled = !state.room || !['playing', 'paused', 'finished'].includes(state.room.status);
+  endGameButton.textContent = state.room?.status === 'finished' ? 'Back to Lobby' : 'End Game';
   const power = state.aim?.power ?? .42;
   document.getElementById('power-readout').textContent = `${Math.round(power * 100)}%`;
   document.getElementById('power-meter').style.width = `${power * 100}%`;
@@ -75,7 +93,7 @@ function updateLobby() {
   if (!state.room) return;
   state.myPlayerId = socket.id || state.myPlayerId;
   document.getElementById('room-code-label').textContent = `Room ${state.room.code}`;
-  document.getElementById('players-list').innerHTML = state.room.players.map(p => `<div class="player-row ${p.host ? 'host' : ''}"><span>${escapeHtml(p.name)}</span><span>${p.host ? 'Host' : 'Guest'}</span></div>`).join('');
+  document.getElementById('players-list').innerHTML = state.room.players.map(p => `<div class="player-row ${p.host ? 'host' : ''}"><span>${escapeHtml(p.name)}</span><span>${p.host ? 'Creator' : 'Guest'}</span></div>`).join('');
   document.getElementById('start-match-btn').disabled = state.room.players.length < 2;
 }
 function updateHud() {
@@ -160,6 +178,11 @@ function cancelCharge() {
   powerSlider.value = '8';
   render(); updateControls();
 }
+function endGame() {
+  if (!state.room) return;
+  if (state.room.status !== 'finished' && !window.confirm('End this game and return both players to the lobby?')) return;
+  socket.emit('end_match', { code: state.room.code });
+}
 
 canvas.addEventListener('pointerdown', event => {
   if (!canControl()) return;
@@ -179,10 +202,11 @@ canvas.addEventListener('contextmenu', event => event.preventDefault());
 powerSlider.addEventListener('input', event => setPower(event.target.value));
 shootButton.addEventListener('click', shoot);
 cancelButton.addEventListener('click', cancelCharge);
+endGameButton.addEventListener('click', endGame);
 
 for (const [action, screen] of [['host','host'],['join','join'],['settings','settings'],['howto','howto']]) document.querySelectorAll(`[data-action="${action}"]`).forEach(b => b.addEventListener('click', () => showScreen(screen)));
 document.querySelectorAll('[data-action="back"]').forEach(b => b.addEventListener('click', () => showScreen(state.room ? 'lobby' : 'menu')));
-document.getElementById('host-btn').addEventListener('click', () => { state.localName = document.getElementById('host-name').value.trim() || 'Host Player'; socket.emit('host_room', { playerName: state.localName }); });
+document.getElementById('host-btn').addEventListener('click', () => { state.localName = document.getElementById('host-name').value.trim() || 'Player 1'; socket.emit('host_room', { playerName: state.localName }); });
 document.getElementById('join-btn').addEventListener('click', () => { state.localName = document.getElementById('join-name').value.trim() || 'Guest Player'; socket.emit('join_room', { code: document.getElementById('room-code').value.trim().toUpperCase(), playerName: state.localName }); });
 document.getElementById('start-match-btn').addEventListener('click', () => { if (state.room) socket.emit('start_match', { code: state.room.code }); });
 
@@ -195,6 +219,7 @@ socket.on('connect', () => {
 });
 socket.on('room_joined', ({ room, sessionToken }) => {
   state.myPlayerId = socket.id; state.room = room; state.aim = null; state.shotRequestPending = false;
+  state.roomReceivedAt = performance.now();
   state.timerSnapshotMs = room.match.timer?.remainingMs ?? 30_000; state.timerSnapshotAt = performance.now();
   if (sessionToken) localStorage.setItem('pool-session', JSON.stringify({ code: room.code, token: sessionToken }));
   state.lastRoomCode = room.code; state.lastShotCount = room.match.shotCount || 0;
@@ -212,6 +237,7 @@ socket.on('shot_started', shot => {
 });
 socket.on('state_update', room => {
   detectNewPockets(room); state.room = room;
+  state.roomReceivedAt = performance.now();
   state.timerSnapshotMs = room.match.timer?.remainingMs ?? 30_000; state.timerSnapshotAt = performance.now();
   const localTurn = activePlayer(room)?.id === socket.id;
   if (room.match.shotInProgress) { state.aim = null; state.shotRequestPending = true; }

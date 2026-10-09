@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { TABLE, createRoom, joinRoom, resumeRoom, startMatch, applyShot, createRack, detectPocketEntry, updateRoomPhysics } from '../server/gameEngine.js';
+import { TABLE, createRoom, joinRoom, resumeRoom, startMatch, endMatch, applyShot, createRack, detectPocketEntry, updateRoomPhysics } from '../server/gameEngine.js';
 
 describe('room management', () => {
   test('creates a room with a host player', () => {
@@ -19,6 +19,27 @@ describe('room management', () => {
     expect(startMatch(room).ok).toBe(false);
     joinRoom(room, 'socket-2', 'Guest');
     expect(startMatch(room).ok).toBe(true);
+    expect(room.status).toBe('playing');
+  });
+
+  test('ends a match for a room player and returns both players to the lobby', () => {
+    const room = createRoom('Host', 'socket-1');
+    joinRoom(room, 'socket-2', 'Guest'); startMatch(room);
+    room.players[0].group = 'solid'; room.players[1].group = 'stripe';
+
+    expect(endMatch(room, 'socket-2').ok).toBe(true);
+    expect(room.status).toBe('waiting');
+    expect(room.match.status).toBe('waiting');
+    expect(room.match.timer.running).toBe(false);
+    expect(room.players.map(player => player.group)).toEqual([null, null]);
+    expect(room.players.map(player => player.id)).toEqual(['socket-1', 'socket-2']);
+  });
+
+  test('rejects ending a match by a socket outside the room', () => {
+    const room = createRoom('Host', 'socket-1');
+    joinRoom(room, 'socket-2', 'Guest'); startMatch(room);
+
+    expect(endMatch(room, 'stranger').ok).toBe(false);
     expect(room.status).toBe('playing');
   });
 
@@ -107,13 +128,27 @@ describe('game rules', () => {
     expect(applyShot(room, 'socket-1', { angle: 0, power: 0.25 }).ok).toBe(true);
     const cue = room.match.balls.find(ball => ball.isCue);
     expect(cue.vx).toBe(0);
-    expect(room.match.pendingShot.vx).toBeCloseTo(180);
+    expect(room.match.pendingShot.vx).toBeCloseTo(240);
     updateRoomPhysics(room, 4 / 60);
     expect(cue.vx).toBe(0);
     expect(applyShot(room, 'socket-1', { angle: 0, power: 1 }).ok).toBe(false);
     updateRoomPhysics(room, 4 / 60);
-    expect(cue.vx).toBeGreaterThan(178);
-    expect(cue.vx).toBeLessThan(180);
+    expect(cue.vx).toBeGreaterThan(238);
+    expect(cue.vx).toBeLessThan(240);
+  });
+
+  test('default power carries the cue into the rack and transfers speed on impact', () => {
+    const room = createRoom('Host', 'socket-1');
+    joinRoom(room, 'socket-2', 'Guest'); startMatch(room);
+    const cue = room.match.balls.find(ball => ball.isCue);
+    const headBall = room.match.balls.find(ball => ball.number === 1);
+    expect(applyShot(room, 'socket-1', { angle: 0, power: 0.42 }).ok).toBe(true);
+
+    for (let frame = 0; frame < 120 && headBall.vx === 0; frame += 1) updateRoomPhysics(room, 1 / 60);
+
+    expect(room.match.firstContact).toBe(true);
+    expect(headBall.vx).toBeGreaterThan(100);
+    expect(cue.vx).toBeLessThan(headBall.vx);
   });
 
   test('captured balls remain synchronized through a visible pocket drop', () => {

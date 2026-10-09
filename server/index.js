@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
-import { createRoom, getRoomByCode, joinRoom, resumeRoom, serializeRoom, startMatch, updateRoomPhysics, applyShot, SHOT_IMPACT_DELAY } from './gameEngine.js';
+import { createRoom, getRoomByCode, joinRoom, resumeRoom, serializeRoom, startMatch, endMatch, updateRoomPhysics, applyShot, SHOT_IMPACT_DELAY } from './gameEngine.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,6 +58,14 @@ io.on('connection', socket => {
     io.to(room.code).emit('state_update', serializeRoom(room));
   });
 
+  socket.on('end_match', ({ code }) => {
+    const room = getRoomByCode(rooms, code);
+    if (!room) { socket.emit('room_error', 'Room was not found.'); return; }
+    const result = endMatch(room, socket.id);
+    if (!result.ok) { socket.emit('room_error', result.error); return; }
+    io.to(room.code).emit('state_update', serializeRoom(room));
+  });
+
   socket.on('shoot_ball', ({ code, angle, power } = {}) => {
     const room = getRoomByCode(rooms, code);
     if (!room) { socket.emit('room_error', 'Room not found.'); return; }
@@ -94,6 +102,7 @@ io.on('connection', socket => {
   });
 });
 
+let physicsTick = 0;
 setInterval(() => {
   for (const room of rooms.values()) {
     const previousTimeoutCount = room.match.timeoutCount || 0;
@@ -102,8 +111,10 @@ setInterval(() => {
       io.to(room.code).emit('turn_timeout', { code: room.code, ...room.match.lastTimeout });
     }
   }
+  physicsTick += 1;
+  if (physicsTick % 2 !== 0) return;
   for (const room of rooms.values()) {
-    if (room.status === 'playing' || room.status === 'waiting' || room.status === 'paused' || (room.status === 'finished' && !room.finishedBroadcast)) {
+    if (room.status === 'playing' || (room.status === 'finished' && !room.finishedBroadcast)) {
       io.to(room.code).emit('state_update', serializeRoom(room));
       if (room.status === 'finished') room.finishedBroadcast = true;
     }
