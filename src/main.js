@@ -1,12 +1,12 @@
 import './style.css';
 import { io } from 'socket.io-client';
-import { PoolRenderer } from './game.js';
+import { CUE_STYLES, PoolRenderer } from './game.js';
 
 const app = document.querySelector('#app');
 const socket = io({ autoConnect: true, transports: ['websocket'] });
 const state = {
   screen: 'menu', room: null, aim: null, myPlayerId: null, localName: '', dragging: false,
-  pointerId: null, shotRequestPending: false, playedShots: new Set(), pocketedIds: new Set(), lastRoomCode: null, lastShotCount: 0,
+  pointerId: null, cuePlacement: null, shotRequestPending: false, playedShots: new Set(), pocketedIds: new Set(), lastRoomCode: null, lastShotCount: 0,
   timerSnapshotMs: 30_000, timerSnapshotAt: performance.now(), roomReceivedAt: performance.now(),
 };
 const BALL_COLORS = { 1:'#f5d32f', 2:'#1357b5', 3:'#d5222b', 4:'#67238c', 5:'#f28020', 6:'#198347', 7:'#852525', 8:'#101316', 9:'#f5d32f', 10:'#1357b5', 11:'#d5222b', 12:'#67238c', 13:'#f28020', 14:'#198347', 15:'#852525' };
@@ -18,9 +18,41 @@ function playSound(kind, volume) {
   audio.play().catch(() => {});
 }
 
+function startLiveFavicon() {
+  const link = document.querySelector('link[rel="icon"]');
+  const canvas = document.createElement('canvas');
+  canvas.width = 64; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  if (!link || !ctx) return;
+  let phase = 0;
+  const draw = () => {
+    ctx.clearRect(0, 0, 64, 64);
+    const felt = ctx.createLinearGradient(4, 4, 60, 60);
+    felt.addColorStop(0, '#28563b'); felt.addColorStop(1, '#07130d');
+    ctx.fillStyle = felt; ctx.beginPath(); ctx.roundRect(2, 2, 60, 60, 17); ctx.fill();
+    ctx.strokeStyle = '#c9a365'; ctx.lineWidth = 2; ctx.stroke();
+    const x = 32 + Math.sin(phase) * 1.2, y = 32;
+    ctx.save(); ctx.translate(x, y);
+    const ball = ctx.createRadialGradient(-8, -10, 2, 0, 0, 24);
+    ball.addColorStop(0, '#555b58'); ball.addColorStop(.48, '#171b19'); ball.addColorStop(1, '#020403');
+    ctx.fillStyle = ball; ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#dec38a'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.save(); ctx.rotate(phase * .7); ctx.beginPath(); ctx.ellipse(0, -17, 7, 2.2, 0, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,248,222,.9)'; ctx.shadowColor = '#fff0be'; ctx.shadowBlur = 8; ctx.fill(); ctx.restore();
+    ctx.fillStyle = '#f4f0e3'; ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#111510'; ctx.font = 'bold 16px Georgia'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('8', 0, 1);
+    ctx.restore();
+    link.type = 'image/png';
+    link.href = canvas.toDataURL('image/png');
+    phase += .16;
+  };
+  draw();
+  window.setInterval(draw, 140);
+}
+startLiveFavicon();
+
 app.innerHTML = `
   <div class="app-shell">
-    <div id="menu-screen" class="screen active"><div class="title-wrap"><p class="eyebrow">Multiplayer Pool</p><h1>8 Ball Pool</h1><p class="subtitle">Rack up. Aim true. Sink the eight.</p></div><div class="menu-grid"><button class="primary" data-action="computer">Play Computer</button><button class="secondary" data-action="challenges">Trick Shot Challenges</button><button class="secondary" data-action="host">Create Game</button><button class="secondary" data-action="join">Join Game</button><button class="secondary" data-action="settings">Settings</button><button class="secondary" data-action="howto">How to Play</button></div></div>
+    <div id="menu-screen" class="screen active"><div class="title-wrap"><img class="brand-mark" src="/saitama-mark.svg" alt="" /><p class="eyebrow">Saitama Table Club</p><h1>Saitama <span>8 Ball Pool Game</span></h1><p class="subtitle">A sharper game under the lights. Rack up. Aim true.</p></div><div class="menu-grid"><button class="primary" data-action="computer">Play Computer</button><button class="secondary" data-action="challenges">Trick Shot Challenges</button><button class="secondary" data-action="host">Create Game</button><button class="secondary" data-action="join">Join Game</button><button class="secondary" data-action="settings">Settings</button><button class="secondary" data-action="howto">How to Play</button></div></div>
     <div id="host-screen" class="screen hidden"><div class="panel"><h2>Create a room</h2><label>Player name<input id="host-name" value="Player 1" maxlength="18" /></label><button id="host-btn" class="primary">Create Room</button><button class="ghost" data-action="back">Back</button></div></div>
     <div id="join-screen" class="screen hidden"><div class="panel"><h2>Join a room</h2><label>Player name<input id="join-name" value="Guest Player" maxlength="18" /></label><label>Room code<input id="room-code" placeholder="ABCD1" maxlength="10" /></label><button id="join-btn" class="primary">Join</button><button class="ghost" data-action="back">Back</button></div></div>
     <div id="lobby-screen" class="screen hidden"><div class="panel lobby-box"><p class="eyebrow">Game room</p><h2 id="room-code-label">Room</h2><div class="room-meta"><p>Share the room code with a player on the same Wi-Fi network.</p><p>Play head-to-head in real time.</p></div><div id="players-list" class="players-list"></div><div class="lobby-actions"><button id="start-match-btn" class="primary">Start Match</button><button class="ghost" data-action="back">Back</button></div></div></div>
@@ -33,15 +65,18 @@ app.innerHTML = `
       <div class="controls-panel"><div class="power-control"><label for="power-slider"><span>Shot power</span><strong id="power-readout">42%</strong></label><input id="power-slider" type="range" min="8" max="100" value="42" aria-label="Shot power, applied to the cue pull-back" /><div class="power-track"><i id="power-meter"></i></div><div class="power-scale"><span>SOFT</span><span>FIRM</span></div></div><div class="shot-actions"><button id="cancel-shot-btn" class="ghost">Cancel charge</button><button id="shoot-btn" class="primary">Shoot</button></div></div>
       <p id="control-hint" class="control-hint">Drag on the table to aim. Set power separately; release never shoots. Tap Shoot to strike.</p>
     </div>
-    <div id="settings-screen" class="screen hidden"><div class="panel"><h2>Settings</h2><label>Graphics<select id="graphics-mode"><option value="balanced">Balanced</option><option value="performance">Performance</option></select></label><button class="primary" data-action="back">Back</button></div></div>
+    <div id="settings-screen" class="screen hidden"><div class="panel settings-panel"><h2>Settings</h2><label>Graphics<select id="graphics-mode"><option value="balanced">Balanced</option><option value="performance">Performance</option></select></label><label>Cue style<select id="cue-style">${Object.entries(CUE_STYLES).map(([id, style]) => `<option value="${id}">${style.label}</option>`).join('')}</select></label><div id="cue-preview" class="cue-preview" aria-hidden="true"><span class="cue-preview-stick"></span><strong id="cue-style-label"></strong></div><button class="primary" data-action="back">Back</button></div></div>
     <div id="howto-screen" class="screen hidden"><div class="panel"><h2>How to play</h2><ul><li>Create a room on the same Wi-Fi; the second phone joins with its code.</li><li>Drag on the table to set shot direction. Pointer release only ends aiming; it never fires.</li><li>Use the separate power slider to pull the cue back and choose the real shot strength.</li><li>Tap Shoot to request a single server-validated strike. Cancel charge returns to a soft setup.</li><li>The game server simulates the shot and synchronizes its impact and result.</li></ul><button class="primary" data-action="back">Back</button></div></div>
   </div>
   <dialog id="app-dialog" class="app-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-message">
-    <div class="dialog-panel"><div class="dialog-ball" aria-hidden="true">8</div><p class="eyebrow">8 Ball Pool</p><h2 id="dialog-title">Message</h2><p id="dialog-message"></p><div class="dialog-actions"><button id="dialog-cancel" class="ghost">Cancel</button><button id="dialog-confirm" class="primary">OK</button></div></div>
+    <div class="dialog-panel"><div class="dialog-ball" aria-hidden="true">8</div><p class="eyebrow">Saitama 8 Ball Pool</p><h2 id="dialog-title">Message</h2><p id="dialog-message"></p><div class="dialog-actions"><button id="dialog-cancel" class="ghost">Cancel</button><button id="dialog-confirm" class="primary">OK</button></div></div>
   </dialog>`;
 
 const canvas = document.getElementById('game-canvas');
 const renderer = new PoolRenderer(canvas);
+const cueStyleSelect = document.getElementById('cue-style');
+const cuePreview = document.getElementById('cue-preview');
+const cueStyleLabel = document.getElementById('cue-style-label');
 const powerSlider = document.getElementById('power-slider');
 const shootButton = document.getElementById('shoot-btn');
 const cancelButton = document.getElementById('cancel-shot-btn');
@@ -53,6 +88,20 @@ const dialogMessage = document.getElementById('dialog-message');
 const dialogCancel = document.getElementById('dialog-cancel');
 const dialogConfirm = document.getElementById('dialog-confirm');
 const screens = Object.fromEntries(['menu','host','join','lobby','challenges','game','settings','howto'].map(n => [n, document.getElementById(`${n}-screen`)]));
+function updateCueStyle(styleName, persist = false) {
+  renderer.setCueStyle(styleName);
+  const style = CUE_STYLES[renderer.cueStyle];
+  cueStyleSelect.value = renderer.cueStyle;
+  cuePreview.style.setProperty('--cue-butt', style.butt[1]);
+  cuePreview.style.setProperty('--cue-shaft', style.shaft[1]);
+  cuePreview.style.setProperty('--cue-accent', style.accent);
+  cuePreview.style.setProperty('--cue-tip', style.tip);
+  cueStyleLabel.textContent = style.label;
+  if (persist) localStorage.setItem('pool-cue-style', renderer.cueStyle);
+  render();
+}
+updateCueStyle(localStorage.getItem('pool-cue-style') || 'maple');
+cueStyleSelect.addEventListener('change', event => updateCueStyle(event.target.value, true));
 let animationFrame = null;
 function animateGame() {
   animationFrame = null;
@@ -99,7 +148,10 @@ function renderChallenges(challenges) {
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function activePlayer(room = state.room) { return room?.players?.[room.match.turnIndex] || null; }
 function canControl(room = state.room) {
-  return !!room && room.status === 'playing' && activePlayer(room)?.id === socket.id && !room.match.shotInProgress && !state.shotRequestPending;
+  return !!room && room.status === 'playing' && activePlayer(room)?.id === socket.id && !room.match.shotInProgress && !state.shotRequestPending && (!room.match.ballInHand || room.match.cueBallPlaced);
+}
+function canPlaceCueBall(room = state.room) {
+  return !!room && room.status === 'playing' && room.match.ballInHand && !room.match.cueBallPlaced && !room.match.shotInProgress && activePlayer(room)?.id === socket.id && !state.shotRequestPending;
 }
 function render() {
   if (!state.room) return;
@@ -110,10 +162,11 @@ function render() {
     ...state.room,
     match: { ...state.room.match, balls: state.room.match.balls.map(ball => ball.pocketed ? ball : { ...ball, x: ball.x + ball.vx * elapsed, y: ball.y + ball.vy * elapsed, rotation: (ball.rotation || 0) + (ball.spin || 0) * elapsed }) },
   } : state.room;
-  renderer.draw(displayRoom, canAim ? state.aim : null);
+  renderer.draw(displayRoom, canAim ? state.aim : null, canPlaceCueBall() ? state.cuePlacement : null);
 }
 function updateControls() {
   const enabled = canControl();
+  const placingCue = canPlaceCueBall();
   const invalidAim = enabled && state.aim && !renderer.canShoot(state.room, state.aim.angle);
   powerSlider.disabled = !enabled;
   shootButton.disabled = !enabled || !state.aim || invalidAim;
@@ -125,8 +178,10 @@ function updateControls() {
   document.getElementById('power-meter').style.width = `${power * 100}%`;
   if (Number(powerSlider.value) !== Math.round(power * 100)) powerSlider.value = String(Math.round(power * 100));
   document.getElementById('control-hint').classList.toggle('invalid', !!invalidAim);
-  document.getElementById('control-hint').textContent = enabled
-    ? invalidAim ? 'Wrong ball. Aim for your group.' : state.room.mode === 'challenge' ? `Pocket ball #${state.room.challenge.targetNumber} in the marked pocket. ${state.room.challenge.shotsRemaining} shots left.` : 'Drag on the table to aim. Set power separately; release never shoots. Tap Shoot to strike.'
+  document.getElementById('control-hint').textContent = placingCue
+    ? 'Foul penalty: drag the cue ball to an open spot, then take your shot.'
+    : enabled
+      ? invalidAim ? 'Wrong ball. Aim for your group.' : state.room.mode === 'challenge' ? `Pocket ball #${state.room.challenge.targetNumber} in the marked pocket. ${state.room.challenge.shotsRemaining} shots left.` : 'Drag on the table to aim. Set power separately; release never shoots. Tap Shoot to strike.'
     : state.room?.status === 'paused' ? 'Match paused while a player reconnects.'
       : state.room?.match?.shotInProgress || state.shotRequestPending ? 'Shot accepted — waiting for the balls to settle.'
         : state.room?.players?.[state.room.match.turnIndex]?.computer ? 'Computer is lining up a shot.' : 'Opponent’s turn — aiming and shot controls are inactive.';
@@ -144,6 +199,7 @@ function updateHud() {
   const challengeHud = document.getElementById('challenge-hud');
   challengeHud.hidden = state.room.mode !== 'challenge';
   document.getElementById('game-screen').classList.toggle('challenge-mode', state.room.mode === 'challenge');
+  document.getElementById('game-screen').classList.toggle('foul-state', state.room.match.foul && state.room.match.ballInHand);
   if (state.room.challenge) {
     const challenge = state.room.challenge;
     document.getElementById('challenge-title').textContent = challenge.title;
@@ -227,6 +283,11 @@ function setAim(event) {
   state.aim = { angle: Math.atan2(dy, dx), power };
   render(); updateControls();
 }
+function setCuePlacement(event) {
+  if (!canPlaceCueBall()) return;
+  state.cuePlacement = getPointerWorld(event);
+  render();
+}
 function setPower(value) {
   if (!canControl()) return;
   const power = Math.max(.08, Math.min(1, Number(value) / 100));
@@ -272,19 +333,41 @@ function exitChallenge() {
   showScreen('challenges');
 }
 
+function showChallengeResult(room) {
+  if (room.mode !== 'challenge' || room.status !== 'finished') return;
+  const challenge = room.challenge;
+  const cleared = challenge.stars > 0;
+  showAppDialog({
+    title: cleared ? 'Challenge cleared!' : 'Challenge over',
+    message: `${challenge.title}: ${cleared ? `${challenge.stars} ${challenge.stars === 1 ? 'star' : 'stars'}` : 'no stars this time'}.`,
+  }).then(() => {
+    if (state.room?.code === room.code && state.room.status === 'finished') exitChallenge();
+  });
+}
+
 canvas.addEventListener('pointerdown', event => {
-  if (!canControl()) return;
+  if (!canControl() && !canPlaceCueBall()) return;
   state.dragging = true; state.pointerId = event.pointerId;
   try { canvas.setPointerCapture(event.pointerId); } catch { /* release/cancel still ends the gesture */ }
-  setAim(event);
+  if (canPlaceCueBall()) setCuePlacement(event);
+  else setAim(event);
 });
-canvas.addEventListener('pointermove', event => { if (state.dragging && event.pointerId === state.pointerId) setAim(event); });
+canvas.addEventListener('pointermove', event => {
+  if (!state.dragging || event.pointerId !== state.pointerId) return;
+  if (canPlaceCueBall()) setCuePlacement(event);
+  else setAim(event);
+});
 canvas.addEventListener('pointerup', event => {
   if (event.pointerId !== state.pointerId) return;
   state.dragging = false; state.pointerId = null;
+  if (canPlaceCueBall() && state.cuePlacement) {
+    socket.emit('place_cue_ball', { code: state.room.code, ...state.cuePlacement });
+    state.cuePlacement = null;
+    render();
+  }
   // Aiming gestures never fire; shot initiation is the explicit Shoot button only.
 });
-canvas.addEventListener('pointercancel', () => { state.dragging = false; state.pointerId = null; });
+canvas.addEventListener('pointercancel', () => { state.dragging = false; state.pointerId = null; state.cuePlacement = null; render(); });
 canvas.addEventListener('lostpointercapture', () => { state.dragging = false; state.pointerId = null; });
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 powerSlider.addEventListener('input', event => setPower(event.target.value));
@@ -329,7 +412,10 @@ socket.on('room_joined', ({ room, sessionToken }) => {
   if (sessionToken) localStorage.setItem('pool-session', JSON.stringify({ code: room.code, token: sessionToken }));
   state.lastRoomCode = room.code; state.lastShotCount = room.match.shotCount || 0;
   state.pocketedIds = new Set(room.match.balls.filter(b => b.pocketed).map(b => b.id));
-  if (room.status === 'playing') { showScreen('game'); updateHud(); updateControls(); render(); }
+  if (room.status === 'playing' || (room.mode === 'challenge' && room.status === 'finished')) {
+    showScreen('game'); updateHud(); updateControls(); render();
+    showChallengeResult(room);
+  }
   else { showScreen('lobby'); updateLobby(); }
 });
 socket.on('session_token', ({ code, token }) => localStorage.setItem('pool-session', JSON.stringify({ code, token })));
@@ -342,21 +428,27 @@ socket.on('shot_started', shot => {
   renderer.playCueStrike(shot); playSound('cue', .42); render(); updateControls();
 });
 socket.on('state_update', room => {
+  const challengeJustFinished = room.mode === 'challenge' && room.status === 'finished' && state.room?.status !== 'finished';
   detectImpacts(state.room, room);
   detectNewPockets(room); state.room = room;
   state.roomReceivedAt = performance.now();
   state.timerSnapshotMs = room.match.timer?.remainingMs ?? 30_000; state.timerSnapshotAt = performance.now();
   const localTurn = activePlayer(room)?.id === socket.id;
+  if (room.match.ballInHand && !room.match.cueBallPlaced) {
+    state.aim = null;
+    state.cuePlacement = null;
+  }
   if (room.match.shotInProgress) { state.aim = null; state.shotRequestPending = true; }
   else {
     state.shotRequestPending = false;
-    if (room.status === 'playing' && localTurn && !state.aim) state.aim = { angle: 0, power: .42 };
+    if (room.status === 'playing' && localTurn && (!room.match.ballInHand || room.match.cueBallPlaced) && !state.aim) state.aim = { angle: 0, power: .42 };
     if (!localTurn || room.status !== 'playing') state.aim = null;
   }
   updateLobby(); updateHud(); updateControls();
   if (room.status === 'playing' || room.status === 'finished') showScreen('game');
   else if (room.status === 'waiting') showScreen('lobby');
   render();
+  if (challengeJustFinished) showChallengeResult(room);
 });
 socket.on('room_error', message => showAppDialog({ title: 'Room update', message }));
 socket.on('state_error', message => { state.shotRequestPending = false; updateControls(); showAppDialog({ title: 'Shot unavailable', message }); });

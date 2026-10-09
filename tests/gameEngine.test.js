@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { TABLE, createRoom, joinRoom, resumeRoom, startMatch, startChallenge, getChallenges, endMatch, removePlayerFromRoom, addComputerPlayer, chooseComputerShot, applyShot, createRack, detectPocketEntry, updateRoomPhysics } from '../server/gameEngine.js';
+import { TABLE, createRoom, joinRoom, resumeRoom, startMatch, startChallenge, getChallenges, endMatch, removePlayerFromRoom, addComputerPlayer, chooseComputerShot, applyShot, placeCueBall, createRack, detectPocketEntry, updateRoomPhysics } from '../server/gameEngine.js';
 
 describe('room management', () => {
   test('creates a room with a host player', () => {
@@ -228,6 +228,56 @@ describe('game rules', () => {
     expect(room.match.foul).toBe(true);
   });
 
+  test('awards ball in hand after a no-contact foul and requires placement before shooting', () => {
+    const room = createRoom('Host', 'socket-1');
+    joinRoom(room, 'socket-2', 'Guest'); startMatch(room);
+    expect(applyShot(room, 'socket-1', { angle: -Math.PI / 2, power: .2 }).ok).toBe(true);
+    room.match.pendingShot = null;
+
+    updateRoomPhysics(room, 1 / 60);
+
+    expect(room.match.turnIndex).toBe(1);
+    expect(room.match.foul).toBe(true);
+    expect(room.match.ballInHand).toBe(true);
+    expect(applyShot(room, 'socket-2', { angle: 0, power: .3 })).toMatchObject({ ok: false, error: expect.stringMatching(/place the cue ball/i) });
+    expect(placeCueBall(room, 'socket-2', { x: 300, y: 200 }).ok).toBe(true);
+    expect(applyShot(room, 'socket-2', { angle: 0, power: .3 }).ok).toBe(true);
+  });
+
+  test('rejects cue placement outside the table or overlapping another ball', () => {
+    const room = createRoom('Host', 'socket-1');
+    joinRoom(room, 'socket-2', 'Guest'); startMatch(room);
+    room.match.ballInHand = true;
+    const objectBall = room.match.balls.find(ball => !ball.isCue);
+
+    expect(placeCueBall(room, 'socket-1', { x: TABLE.bounds.left, y: 200 }).ok).toBe(false);
+    expect(placeCueBall(room, 'socket-1', { x: objectBall.x, y: objectBall.y }).ok).toBe(false);
+    expect(placeCueBall(room, 'socket-1', { x: 300, y: 200 }).ok).toBe(true);
+    expect(room.match.cueBallPlaced).toBe(true);
+  });
+
+  test('awards ball in hand when the first hit is illegal or no cushion is reached', () => {
+    const room = createRoom('Host', 'socket-1');
+    joinRoom(room, 'socket-2', 'Guest'); startMatch(room);
+    room.players[0].group = 'solid'; room.players[1].group = 'stripe';
+    Object.assign(room.match, { shotInProgress: true, firstContact: true, firstContactBall: { number: 9, type: 'stripe' }, shotStartOwnBallsRemain: true });
+
+    updateRoomPhysics(room, 1 / 60);
+
+    expect(room.match.foul).toBe(true);
+    expect(room.match.ballInHand).toBe(true);
+    expect(room.match.lastEvent).toBe('Wrong first contact.');
+
+    room.match = { ...room.match, turnIndex: 0, shotInProgress: true, ballInHand: false, cueBallPlaced: false, firstContact: true,
+      firstContactBall: { number: 1, type: 'solid' }, railContact: false, shotStartOwnBallsRemain: true, pendingShot: null };
+    room.status = 'playing';
+    updateRoomPhysics(room, 1 / 60);
+
+    expect(room.match.foul).toBe(true);
+    expect(room.match.ballInHand).toBe(true);
+    expect(room.match.lastEvent).toContain('cushion');
+  });
+
   test('stops physics when balls settle', () => {
     const room = createRoom('Host', 'socket-1');
     joinRoom(room, 'socket-2', 'Guest');
@@ -326,6 +376,15 @@ describe('game rules', () => {
     const ball = { x: 106, y: 100, vx: -360, vy: -360, radius: 14, pocketed: false };
 
     const captured = detectPocketEntry(ball, 112, 106);
+
+    expect(captured).toBe(TABLE.pockets[0]);
+    expect(ball.pocketed).toBe(true);
+  });
+
+  test('captures a ball crossing the outer lip of a corner-pocket opening', () => {
+    const ball = { x: 110, y: 105, vx: -120, vy: -120, radius: 14, pocketed: false };
+
+    const captured = detectPocketEntry(ball, 112, 107);
 
     expect(captured).toBe(TABLE.pockets[0]);
     expect(ball.pocketed).toBe(true);

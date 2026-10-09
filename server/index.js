@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
-import { createRoom, getRoomByCode, joinRoom, resumeRoom, serializeRoom, startMatch, startChallenge, getChallenges, endMatch, removePlayerFromRoom, addComputerPlayer, chooseComputerShot, updateRoomPhysics, applyShot, SHOT_IMPACT_DELAY } from './gameEngine.js';
+import { createRoom, getRoomByCode, joinRoom, resumeRoom, serializeRoom, startMatch, startChallenge, getChallenges, endMatch, removePlayerFromRoom, addComputerPlayer, chooseComputerShot, updateRoomPhysics, applyShot, placeCueBall, SHOT_IMPACT_DELAY } from './gameEngine.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,8 +18,25 @@ app.get('/api/challenges', (req, res) => res.json(getChallenges()));
 const distFolder = path.join(__dirname, '..', 'dist');
 const hasBuiltClient = fs.existsSync(distFolder);
 if (hasBuiltClient) {
+  app.get('/', (req, res) => {
+    const forwardedProtocol = req.get('x-forwarded-proto')?.split(',')[0].trim();
+    const protocol = forwardedProtocol || req.protocol;
+    const origin = new URL(`${protocol}://${req.get('host')}`).origin;
+    const html = fs.readFileSync(path.join(distFolder, 'index.html'), 'utf8').replaceAll('__SITE_ORIGIN__', origin);
+    res.type('html').send(html);
+  });
   app.use(express.static(distFolder));
   app.get(/^(.*)$/, (req, res) => { res.sendFile(path.join(distFolder, 'index.html')); });
+}
+
+function placeComputerCueBall(room, player) {
+  if (!room.match.ballInHand || room.match.cueBallPlaced) return true;
+  for (let y = 120; y <= 440; y += 30) {
+    for (let x = 120; x <= 860; x += 30) {
+      if (placeCueBall(room, player.id, { x, y }).ok) return true;
+    }
+  }
+  return false;
 }
 
 io.on('connection', socket => {
@@ -114,6 +131,14 @@ io.on('connection', socket => {
     io.to(room.code).emit('state_update', serializeRoom(room));
   });
 
+  socket.on('place_cue_ball', ({ code, x, y } = {}) => {
+    const room = getRoomByCode(rooms, code);
+    if (!room) { socket.emit('room_error', 'Room not found.'); return; }
+    const result = placeCueBall(room, socket.id, { x, y });
+    if (!result.ok) { socket.emit('room_error', result.error); return; }
+    io.to(room.code).emit('state_update', serializeRoom(room));
+  });
+
   socket.on('disconnect', () => {
     for (const [code, room] of rooms.entries()) {
       const player = room.players.find(candidate => candidate.id === socket.id);
@@ -145,6 +170,7 @@ setInterval(() => {
     updateRoomPhysics(room, 1 / 60);
     if ((room.match.timeoutCount || 0) > previousTimeoutCount) {
       io.to(room.code).emit('turn_timeout', { code: room.code, ...room.match.lastTimeout });
+      io.to(room.code).emit('state_update', serializeRoom(room));
     }
     if (room.status === 'playing' && !room.match.shotInProgress) {
       const current = room.players[room.match.turnIndex];
@@ -152,6 +178,12 @@ setInterval(() => {
         room.match.computerTurnAt ??= Date.now() + 850;
         if (Date.now() >= room.match.computerTurnAt) {
           room.match.computerTurnAt = null;
+          if (!placeComputerCueBall(room, current)) {
+            room.match.message = 'Computer could not find an open cue-ball position.';
+            room.match.lastEvent = 'Computer cue-ball placement failed.';
+            room.match.computerTurnAt = Date.now() + 1000;
+            continue;
+          }
           const shot = chooseComputerShot(room);
           const result = shot && applyShot(room, current.id, shot);
           if (result?.ok) {

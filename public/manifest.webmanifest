@@ -1,10 +1,10 @@
 {
-  "name": "8 Ball Pool",
-  "short_name": "8 Ball Pool",
+  "name": "Saitama 8 Ball Pool Game",
+  "short_name": "Saitama Pool",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0a2a1d",
-  "theme_color": "#0f3d2a",
+  "background_color": "#10261d",
+  "theme_color": "#10261d",
   "icons": [
     {
       "src": "/icon.svg",

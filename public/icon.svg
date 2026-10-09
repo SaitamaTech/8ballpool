@@ -1,8 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="56" fill="#0f3d2a"/>
-  <rect x="54" y="54" width="404" height="404" rx="46" fill="#1a7a5c"/>
-  <circle cx="185" cy="185" r="52" fill="#f4f4f4"/>
-  <circle cx="326" cy="185" r="52" fill="#111827"/>
-  <circle cx="256" cy="326" r="54" fill="#f4f4f4"/>
-  <text x="256" y="282" text-anchor="middle" font-size="94" font-family="Arial, sans-serif" fill="#0b1420">8</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <radialGradient id="felt" cx="28%" cy="18%" r="95%">
+      <stop offset="0" stop-color="#2b5b40"/>
+      <stop offset="1" stop-color="#091610"/>
+    </radialGradient>
+    <radialGradient id="ball" cx="28%" cy="18%" r="78%">
+      <stop offset="0" stop-color="#555b58"/>
+      <stop offset=".45" stop-color="#171b19"/>
+      <stop offset="1" stop-color="#030605"/>
+    </radialGradient>
+    <linearGradient id="brass" x1="48" y1="42" x2="465" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f1d79e"/>
+      <stop offset="1" stop-color="#9d6031"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="492" height="492" rx="120" fill="url(#felt)" stroke="url(#brass)" stroke-width="12"/>
+  <path d="M70 388h372M78 78v348M434 78v348" stroke="#c89a5b" stroke-opacity=".55" stroke-width="10"/>
+  <path d="m105 423 302-300" stroke="#3b2113" stroke-width="38" stroke-linecap="round"/>
+  <path d="m108 415 293-292" stroke="url(#brass)" stroke-width="17" stroke-linecap="round"/>
+  <path d="m108 415 39-39" stroke="#f7f0dd" stroke-width="17" stroke-linecap="round"/>
+  <circle cx="258" cy="251" r="143" fill="url(#ball)" stroke="#d6ba7d" stroke-width="10"/>
+  <path d="M169 153a113 113 0 0 1 136-35" stroke="#fff5dc" stroke-opacity=".62" stroke-linecap="round" stroke-width="13"/>
+  <circle cx="258" cy="253" r="74" fill="#f4f0e3"/>
+  <text x="258" y="287" fill="#111510" font-family="Georgia,serif" font-size="110" font-weight="bold" text-anchor="middle">8</text>
 </svg>

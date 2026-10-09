@@ -1,11 +1,19 @@
 const WORLD_W = 980;
 const WORLD_H = 560;
+export const CUE_STYLES = {
+  maple: { label: 'Maple & Brass', butt: ['#2a130d', '#985126', '#31170e'], shaft: ['#62401e', '#f0d59a', '#c48b4c', '#f5dca7', '#4e2b17'], accent: '#d5a45e', contrast: '#8bc4c7', ring: '#d9c69c', tip: '#2679a0', inlay: 'diamonds' },
+  ocean: { label: 'Ocean Glass', butt: ['#071827', '#126678', '#071522'], shaft: ['#253a4a', '#deedf0', '#82afba', '#f0faf6', '#29414d'], accent: '#4de3d4', contrast: '#b4e8f4', ring: '#bfd7de', tip: '#237eaa', inlay: 'parallel' },
+  ember: { label: 'Emberline', butt: ['#280b0a', '#a93420', '#30100b'], shaft: ['#502115', '#f1c68f', '#c8753d', '#f8dfad', '#432015'], accent: '#ff8254', contrast: '#f3d48f', ring: '#e8c292', tip: '#563a37', inlay: 'chevrons' },
+  jade: { label: 'Jade Regent', butt: ['#081b13', '#176044', '#071710'], shaft: ['#39412d', '#e6d9a6', '#b69a5b', '#f8e9bd', '#352719'], accent: '#55d7a0', contrast: '#e2c36f', ring: '#d9c98f', tip: '#25866b', inlay: 'diamonds' },
+  carbon: { label: 'Carbon Pulse', butt: ['#090d16', '#303b50', '#070a11'], shaft: ['#4c5361', '#e3e7eb', '#929eac', '#fafcff', '#353d49'], accent: '#61dfff', contrast: '#ff9b63', ring: '#ccd7e4', tip: '#398bb2', inlay: 'parallel' },
+};
 
 export class PoolRenderer {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.cueStrike = null;
+    this.cueStyle = 'maple';
     this.effects = [];
     this.shakeAt = 0;
     this.shakeStrength = 0;
@@ -22,6 +30,10 @@ export class PoolRenderer {
   playCueStrike(shot) {
     if (this.cueStrike?.shotId === shot.shotId) return;
     this.cueStrike = { ...shot, startedAt: performance.now() };
+  }
+
+  setCueStyle(style) {
+    if (CUE_STYLES[style]) this.cueStyle = style;
   }
 
   addImpact(x, y, intensity = 1) {
@@ -60,7 +72,7 @@ export class PoolRenderer {
 
   toScreen(x, y, layout) { return [layout.ox + x * layout.scale, layout.oy + y * layout.scale]; }
 
-  draw(room, aim = null) {
+  draw(room, aim = null, cuePlacement = null) {
     if (!room) return;
     const ctx = this.ctx;
     const L = this.layout();
@@ -78,7 +90,14 @@ export class PoolRenderer {
       const cue = balls.find(b => b.isCue && !b.pocketed);
       if (cue) this.drawPrediction(ctx, cue, balls, aim.angle, L.scale, room);
     }
-    for (const ball of balls) if (!ball.pocketed || (ball.dropProgress > 0 && ball.dropProgress < 1)) this.drawBall(ctx, ball);
+    for (const ball of balls) {
+      if (ball.isCue && room.match?.ballInHand && !room.match?.cueBallPlaced) continue;
+      if (!ball.pocketed || (ball.dropProgress > 0 && ball.dropProgress < 1)) this.drawBall(ctx, ball);
+    }
+    if (cuePlacement && room.match?.ballInHand && !room.match?.cueBallPlaced) {
+      const cue = balls.find(ball => ball.isCue);
+      if (cue) this.drawCuePlacement(ctx, cue, cuePlacement, this.canPlaceCueBall(room, cuePlacement), L.scale);
+    }
     if (room.challenge && room.status === 'playing') this.drawChallengeMarkers(ctx, room.challenge, balls, L.scale);
     if (aim && room.match?.status === 'playing' && !room.match?.shotInProgress) {
       const cue = balls.find(b => b.isCue && !b.pocketed);
@@ -135,6 +154,21 @@ export class PoolRenderer {
     return hit.number === 8 ? eightOpen : !group || hit.type === group;
   }
 
+  canPlaceCueBall(room, position) {
+    const cue = room?.match?.balls?.find(ball => ball.isCue);
+    if (!cue || position.x < 98 + cue.radius || position.x > 882 - cue.radius || position.y < 87 + cue.radius || position.y > 473 - cue.radius) return false;
+    return !room.match.balls.some(ball => !ball.isCue && !ball.pocketed && Math.hypot(ball.x - position.x, ball.y - position.y) < ball.radius + cue.radius);
+  }
+
+  drawCuePlacement(ctx, cue, position, valid, scale) {
+    ctx.save(); ctx.globalAlpha = .76;
+    this.drawBall(ctx, { ...cue, ...position, pocketed: false, dropProgress: 0, rotation: 0 });
+    ctx.strokeStyle = valid ? '#b8f58a' : '#ff5267'; ctx.lineWidth = 2.4 / scale;
+    ctx.setLineDash([5 / scale, 4 / scale]); ctx.shadowColor = ctx.strokeStyle; ctx.shadowBlur = 10 / scale;
+    ctx.beginPath(); ctx.arc(position.x, position.y, cue.radius + 5 / scale, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+
   drawEffects(ctx, scale) {
     const now = performance.now();
     this.effects = this.effects.filter(effect => now - effect.startedAt < effect.duration);
@@ -168,9 +202,17 @@ export class PoolRenderer {
     wood.addColorStop(0, '#9b6637'); wood.addColorStop(.22, '#56331d'); wood.addColorStop(.5, '#24170f'); wood.addColorStop(.8, '#714522'); wood.addColorStop(1, '#301d12');
     ctx.fillStyle = wood; this.roundRect(ctx, x, y, w, h, 30); ctx.fill(); ctx.restore();
     ctx.strokeStyle = 'rgba(237,190,124,.48)'; ctx.lineWidth = 2; this.roundRect(ctx, x + 7, y + 7, w - 14, h - 14, 25); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,224,169,.2)'; ctx.lineWidth = 1; this.roundRect(ctx, x + 12, y + 12, w - 24, h - 24, 22); ctx.stroke();
     const rail = ctx.createLinearGradient(0, y + 18, 0, y + 83);
     rail.addColorStop(0, '#79502e'); rail.addColorStop(.45, '#bc8650'); rail.addColorStop(1, '#593820');
     ctx.fillStyle = rail; this.roundRect(ctx, 46, 39, 888, 482, 20); ctx.fill();
+    ctx.save(); this.roundRect(ctx, 46, 39, 888, 482, 20); ctx.clip();
+    for (let grain = 0; grain < 12; grain += 1) {
+      const gy = 44 + grain * 5;
+      ctx.strokeStyle = grain % 3 ? 'rgba(255,220,163,.035)' : 'rgba(35,17,8,.11)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(52, gy); ctx.bezierCurveTo(245, gy - 3, 660, gy + 4, 928, gy - 2); ctx.stroke();
+    }
+    ctx.restore();
     const cloth = ctx.createLinearGradient(100, 90, 850, 475);
     cloth.addColorStop(0, '#14764d'); cloth.addColorStop(.48, '#0d6340'); cloth.addColorStop(1, '#08472f');
     ctx.fillStyle = cloth; this.roundRect(ctx, 78, 67, 824, 426, 15); ctx.fill();
@@ -185,6 +227,14 @@ export class PoolRenderer {
     }
     const light = ctx.createRadialGradient(470, 260, 50, 490, 280, 510);
     light.addColorStop(0, 'rgba(255,255,220,.055)'); light.addColorStop(1, 'rgba(0,0,0,.13)'); ctx.fillStyle = light; ctx.fillRect(78, 67, 824, 426); ctx.restore();
+    ctx.save(); this.roundRect(ctx, 78, 67, 824, 426, 15); ctx.clip();
+    ctx.strokeStyle = 'rgba(235,244,218,.14)'; ctx.lineWidth = 1.1; ctx.setLineDash([5, 5]);
+    ctx.beginPath(); ctx.moveTo(300, 98); ctx.lineTo(300, 462); ctx.stroke(); ctx.setLineDash([]);
+    for (const [sx, sy] of [[300, 280], [700, 280], [490, 280]]) {
+      ctx.fillStyle = 'rgba(230,241,216,.25)'; ctx.beginPath(); ctx.arc(sx, sy, 2.3, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(230,241,216,.14)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sx, sy, 6, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
     // Cushion noses and inlaid diamond sights.
     ctx.strokeStyle = '#12432e'; ctx.lineWidth = 10; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(111, 87); ctx.lineTo(443, 87); ctx.moveTo(537, 87); ctx.lineTo(869, 87);
@@ -200,11 +250,17 @@ export class PoolRenderer {
       ctx.fillStyle = '#020403'; ctx.beginPath(); ctx.ellipse(px, py + 3, r * .7, r * .62, 0, 0, Math.PI * 2); ctx.fill();
     }
     const diamonds = [180, 285, 390, 590, 695, 800];
-    for (const dx of diamonds) for (const dy of [51, 509]) { ctx.fillStyle = 'rgba(238,216,176,.78)'; ctx.beginPath(); ctx.arc(dx, dy, 3.2, 0, Math.PI * 2); ctx.fill(); }
-    for (const dy of [155, 260, 365]) for (const dx of [61, 919]) { ctx.fillStyle = 'rgba(238,216,176,.78)'; ctx.beginPath(); ctx.arc(dx, dy, 3.2, 0, Math.PI * 2); ctx.fill(); }
+    for (const dx of diamonds) for (const dy of [51, 509]) this.drawSight(ctx, dx, dy);
+    for (const dy of [155, 260, 365]) for (const dx of [61, 919]) this.drawSight(ctx, dx, dy);
   }
 
   pocketPoints() { return [[82, 72, 21], [490, 68, 18], [898, 72, 21], [82, 488, 21], [490, 492, 18], [898, 488, 21]]; }
+  drawSight(ctx, x, y) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = 'rgba(32,20,13,.72)'; ctx.fillRect(-4.2, -4.2, 8.4, 8.4);
+    ctx.strokeStyle = 'rgba(250,221,166,.9)'; ctx.lineWidth = 1; ctx.strokeRect(-3, -3, 6, 6);
+    ctx.fillStyle = 'rgba(255,245,217,.82)'; ctx.fillRect(-1, -1, 2, 2); ctx.restore();
+  }
   roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
 
   drawPrediction(ctx, cue, balls, angle, scale, room) {
@@ -232,6 +288,7 @@ export class PoolRenderer {
   }
 
   drawCue(ctx, ball, angle, power, strikeProgress = null) {
+    const style = CUE_STYLES[this.cueStyle] || CUE_STYLES.maple;
     const [x, y] = [ball.x, ball.y];
     const pull = 12 + Math.max(0, Math.min(1, power)) * 47;
     const restingGap = ball.radius + 5 + pull;
@@ -247,32 +304,53 @@ export class PoolRenderer {
     ctx.save(); ctx.translate(2, 4); ctx.fillStyle = 'rgba(0,0,0,.38)';
     ctx.beginPath(); ctx.moveTo(tip, -2.5); ctx.lineTo(tip - 10, -3.3); ctx.lineTo(shaftBack, -4.4); ctx.lineTo(shaftBack - 7, -6.5); ctx.lineTo(buttBack, -8.1); ctx.lineTo(buttBack, 8.1); ctx.lineTo(shaftBack - 7, 6.5); ctx.lineTo(shaftBack, 4.4); ctx.lineTo(tip - 10, 3.3); ctx.lineTo(tip, 2.5); ctx.closePath(); ctx.fill(); ctx.restore();
     const lacquer = ctx.createLinearGradient(0, -9, 0, 9);
-    lacquer.addColorStop(0, '#103b44'); lacquer.addColorStop(.12, '#2f91a0'); lacquer.addColorStop(.28, '#19262b'); lacquer.addColorStop(.48, '#080d10'); lacquer.addColorStop(.72, '#1a252a'); lacquer.addColorStop(.9, '#b83e46'); lacquer.addColorStop(1, '#321318');
+    style.butt.forEach((color, index) => lacquer.addColorStop(index / (style.butt.length - 1), color));
     ctx.fillStyle = lacquer;
     ctx.beginPath(); ctx.moveTo(shaftBack - 4, -4.2); ctx.lineTo(buttBack, -8.2); ctx.quadraticCurveTo(buttBack - 3, 0, buttBack, 8.2); ctx.lineTo(shaftBack - 4, 4.2); ctx.closePath(); ctx.fill();
     const shaft = ctx.createLinearGradient(0, -4.5, 0, 4.5);
-    shaft.addColorStop(0, '#62401e'); shaft.addColorStop(.18, '#f0d59a'); shaft.addColorStop(.34, '#c48b4c'); shaft.addColorStop(.55, '#f5dca7'); shaft.addColorStop(.82, '#9b632f'); shaft.addColorStop(1, '#4e2b17');
+    style.shaft.forEach((color, index) => shaft.addColorStop(index / (style.shaft.length - 1), color));
     ctx.fillStyle = shaft;
     ctx.beginPath(); ctx.moveTo(tip - 12, -3.1); ctx.lineTo(shaftBack, -4.35); ctx.lineTo(shaftBack, 4.35); ctx.lineTo(tip - 12, 3.1); ctx.closePath(); ctx.fill();
     // Fine grain and tournament-style inlays follow the cue's long axis.
-    ctx.globalAlpha = .38; ctx.strokeStyle = '#fff0c9'; ctx.lineWidth = .75; ctx.beginPath(); ctx.moveTo(shaftBack - 5, -2.7); ctx.lineTo(tip - 15, -1.8); ctx.stroke();
-    ctx.globalAlpha = .8; ctx.strokeStyle = '#d5a45e'; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.moveTo(buttBack + 8, -4.8); ctx.lineTo(shaftBack - 15, -2.4); ctx.stroke();
-    ctx.strokeStyle = '#2ab7ca'; ctx.lineWidth = 1.25; ctx.beginPath(); ctx.moveTo(buttBack + 10, 5.2); ctx.lineTo(shaftBack - 15, 2.5); ctx.stroke();
+    ctx.globalAlpha = .38; ctx.strokeStyle = '#fff'; ctx.lineWidth = .75; ctx.beginPath(); ctx.moveTo(shaftBack - 5, -2.7); ctx.lineTo(tip - 15, -1.8); ctx.stroke();
+    ctx.globalAlpha = .8; ctx.strokeStyle = style.accent; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.moveTo(buttBack + 8, -4.8); ctx.lineTo(shaftBack - 15, -2.4); ctx.stroke();
+    ctx.strokeStyle = style.contrast; ctx.lineWidth = 1.25; ctx.beginPath(); ctx.moveTo(buttBack + 10, 5.2); ctx.lineTo(shaftBack - 15, 2.5); ctx.stroke();
+    this.drawCueInlay(ctx, style, buttBack, shaftBack);
     ctx.globalAlpha = 1;
     // Contrasting ferrule, narrow chrome rings, and a dark layered cue tip.
     const band = (at, halfWidth, color) => { ctx.fillStyle = color; ctx.fillRect(at - halfWidth, -4.7, halfWidth * 2, 9.4); ctx.fillStyle = 'rgba(255,255,255,.56)'; ctx.fillRect(at - halfWidth, -4.7, 1.1, 9.4); };
-    band(shaftBack - 2, 2.2, '#d9c69c'); band(shaftBack - 10, 1.4, '#8cc5c7'); band(shaftBack - 15, 1.1, '#d5a45e');
-    band(tip - 12, 2.1, '#e5e1cf');
+    band(shaftBack - 2, 2.2, style.ring); band(shaftBack - 10, 1.4, style.contrast); band(shaftBack - 15, 1.1, style.accent);
+    band(tip - 12, 2.1, style.ring);
     ctx.fillStyle = '#e6dfca'; ctx.fillRect(tip - 8, -3.05, 7, 6.1);
     ctx.fillStyle = '#303845'; ctx.fillRect(tip - 2.4, -2.45, 2.1, 4.9);
-    ctx.fillStyle = '#2679a0'; ctx.fillRect(tip - .4, -2.25, 1.4, 4.5);
+    ctx.fillStyle = style.tip; ctx.fillRect(tip - .4, -2.25, 1.4, 4.5);
     // Small faceted butt-cap and two polished accent collars make the silhouette read at phone scale.
-    band(buttBack + 7, 2.8, '#d3a967'); band(buttBack + 15, 1.8, '#67c4d0'); band(shaftBack - 25, 2.2, '#ba3543');
+    band(buttBack + 7, 2.8, style.ring); band(buttBack + 15, 1.8, style.contrast); band(shaftBack - 25, 2.2, style.accent);
     ctx.strokeStyle = 'rgba(255,237,193,.55)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(buttBack + 20, -5.7); ctx.lineTo(buttBack + 23, 0); ctx.lineTo(buttBack + 20, 5.7); ctx.stroke();
     if (strikeProgress !== null && strikeProgress > .42 && strikeProgress < .65) {
       const p = (strikeProgress - .42) / .23; ctx.save(); ctx.globalAlpha = (1 - p) * .82;
-      ctx.strokeStyle = '#a9f2ff'; ctx.lineWidth = 2.1; ctx.shadowColor = '#65dfff'; ctx.shadowBlur = 9;
+      ctx.strokeStyle = style.contrast; ctx.lineWidth = 2.1; ctx.shadowColor = style.accent; ctx.shadowBlur = 9;
       ctx.beginPath(); ctx.arc(tip - 1, 0, 3 + p * 12, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  drawCueInlay(ctx, style, buttBack, shaftBack) {
+    ctx.save(); ctx.strokeStyle = style.accent; ctx.lineWidth = .9; ctx.globalAlpha = .88;
+    if (style.inlay === 'diamonds') {
+      for (let index = 0; index < 3; index += 1) {
+        const x = buttBack + 34 + index * 18;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 5, -2.8); ctx.lineTo(x + 10, 0); ctx.lineTo(x + 5, 2.8); ctx.closePath(); ctx.stroke();
+      }
+    } else if (style.inlay === 'chevrons') {
+      for (let index = 0; index < 3; index += 1) {
+        const x = buttBack + 30 + index * 17;
+        ctx.beginPath(); ctx.moveTo(x, -2.8); ctx.lineTo(x + 7, 0); ctx.lineTo(x, 2.8); ctx.stroke();
+      }
+    } else {
+      for (const y of [-2.3, 2.3]) {
+        ctx.beginPath(); ctx.moveTo(buttBack + 28, y); ctx.lineTo(shaftBack - 29, y); ctx.stroke();
+      }
     }
     ctx.restore();
   }

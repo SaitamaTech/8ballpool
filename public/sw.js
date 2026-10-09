@@ -1,5 +1,5 @@
-const CACHE_NAME = 'local-8-ball-cache-v12';
-const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/cue-strike.wav', '/pocket-drop.wav'];
+const CACHE_NAME = 'local-8-ball-cache-v14';
+const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/favicon-live.svg', '/saitama-mark.svg', '/home-background-premium-b.jpg', '/cue-strike.wav', '/pocket-drop.wav'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)));
   self.skipWaiting();
