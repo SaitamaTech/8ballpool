@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
-import { createRoom, getRoomByCode, joinRoom, resumeRoom, serializeRoom, startMatch, endMatch, updateRoomPhysics, applyShot, SHOT_IMPACT_DELAY } from './gameEngine.js';
+import { createRoom, getRoomByCode, joinRoom, resumeRoom, serializeRoom, startMatch, endMatch, addComputerPlayer, chooseComputerShot, updateRoomPhysics, applyShot, SHOT_IMPACT_DELAY } from './gameEngine.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,6 +27,18 @@ io.on('connection', socket => {
     rooms.set(room.code, room);
     socket.join(room.code);
     socket.emit('room_joined', { room: serializeRoom(room), sessionToken: room.players[0].token });
+  });
+
+  socket.on('start_computer_game', ({ playerName }) => {
+    const room = createRoom(playerName || 'Player 1', socket.id);
+    addComputerPlayer(room);
+    const result = startMatch(room);
+    if (!result.ok) { socket.emit('room_error', result.error); return; }
+    rooms.set(room.code, room);
+    room.finishedBroadcast = false;
+    socket.join(room.code);
+    socket.emit('room_joined', { room: serializeRoom(room), sessionToken: room.players[0].token });
+    io.to(room.code).emit('state_update', serializeRoom(room));
   });
 
   socket.on('join_room', ({ code, playerName }) => {
@@ -109,6 +121,26 @@ setInterval(() => {
     updateRoomPhysics(room, 1 / 60);
     if ((room.match.timeoutCount || 0) > previousTimeoutCount) {
       io.to(room.code).emit('turn_timeout', { code: room.code, ...room.match.lastTimeout });
+    }
+    if (room.status === 'playing' && !room.match.shotInProgress) {
+      const current = room.players[room.match.turnIndex];
+      if (current?.computer) {
+        room.match.computerTurnAt ??= Date.now() + 850;
+        if (Date.now() >= room.match.computerTurnAt) {
+          room.match.computerTurnAt = null;
+          const shot = chooseComputerShot(room);
+          const result = shot && applyShot(room, current.id, shot);
+          if (result?.ok) {
+            const cue = room.match.balls.find(ball => ball.isCue);
+            io.to(room.code).emit('shot_started', { code: room.code, shotId: room.match.shotCount, playerId: current.id,
+              angle: shot.angle, power: shot.power, cueX: cue.x, cueY: cue.y, impactDelay: SHOT_IMPACT_DELAY });
+          } else {
+            room.match.message = 'Computer could not find a legal shot.';
+            room.match.lastEvent = 'Computer shot selection failed.';
+            room.match.computerTurnAt = Date.now() + 1000;
+          }
+        }
+      } else room.match.computerTurnAt = null;
     }
   }
   physicsTick += 1;

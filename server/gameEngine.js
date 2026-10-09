@@ -52,7 +52,7 @@ export function createRack() {
 export function createGameState() {
   return { balls: createRack(), turnIndex: 0, shotInProgress: false, shotCount: 0, status: 'waiting', winner: null,
     message: 'Open table — groups not assigned.', lastEvent: 'Rack set.', pocketsHit: [], ballInHand: false, foul: false,
-    firstContact: false, pendingShot: null, timer: { durationMs: TURN_DURATION_MS, running: false, remainingMs: TURN_DURATION_MS, deadline: null, turnSerial: 0 },
+    firstContact: false, pendingShot: null, computerTurnAt: null, timer: { durationMs: TURN_DURATION_MS, running: false, remainingMs: TURN_DURATION_MS, deadline: null, turnSerial: 0 },
     timeoutCount: 0, lastTimeout: null };
 }
 
@@ -77,7 +77,7 @@ export function createRoom(hostName, socketId) {
 export function serializeRoom(room, now = Date.now()) {
   const timer = room.match.timer || { durationMs: TURN_DURATION_MS, running: false, remainingMs: TURN_DURATION_MS, deadline: null, turnSerial: 0 };
   const remainingMs = timer.running && Number.isFinite(timer.deadline) ? Math.max(0, timer.deadline - now) : Math.max(0, timer.remainingMs ?? TURN_DURATION_MS);
-  return { code: room.code, status: room.status, players: room.players.map(p => ({ id: p.id, name: p.name, host: p.host, connected: p.connected, group: p.group, score: p.score })),
+  return { code: room.code, status: room.status, players: room.players.map(p => ({ id: p.id, name: p.name, host: p.host, computer: !!p.computer, connected: p.connected, group: p.group, score: p.score })),
     match: { turnIndex: room.match.turnIndex, status: room.match.status, winner: room.match.winner, message: room.match.message, lastEvent: room.match.lastEvent,
       shotCount: room.match.shotCount, shotInProgress: room.match.shotInProgress, ballInHand: room.match.ballInHand, foul: room.match.foul,
       timeoutCount: room.match.timeoutCount || 0, lastTimeout: room.match.lastTimeout || null,
@@ -91,6 +91,13 @@ export function joinRoom(room, socketId, playerName) {
   const player = { id: socketId, name: playerName, token: randomUUID(), host: false, connected: true, group: null, score: 0 };
   room.players.push(player);
   return { ok: true, token: player.token };
+}
+
+export function addComputerPlayer(room) {
+  if (!room || room.players.length >= 2) return { ok: false, error: 'This room already has two players.' };
+  const player = { id: `computer-${randomUUID()}`, name: 'Computer', token: null, host: false, computer: true, connected: true, group: null, score: 0 };
+  room.players.push(player);
+  return { ok: true, player };
 }
 
 export function resumeRoom(room, socketId, token) {
@@ -218,6 +225,7 @@ function rail(ball) {
 
 function passTurn(room, now = Date.now()) {
   room.match.turnIndex = (room.match.turnIndex + 1) % room.players.length;
+  room.match.computerTurnAt = null;
   if (room.status === 'playing' && room.match.status === 'playing') startTurnTimer(room.match, now);
 }
 
@@ -315,6 +323,57 @@ function firstBallOnRay(cue, balls, angle) {
     if (distance < firstDistance) { firstDistance = distance; target = ball; }
   }
   return target;
+}
+
+export function chooseComputerShot(room) {
+  const match = room.match, player = room.players[match.turnIndex];
+  const cue = match.balls.find(ball => ball.isCue && !ball.pocketed);
+  if (!cue || !player?.computer) return null;
+  const ownBallsRemain = player.group && match.balls.some(ball => ball.type === player.group && !ball.pocketed);
+  const targets = match.balls.filter(ball => !ball.isCue && !ball.pocketed &&
+    (ball.number === 8 ? !!player.group && !ownBallsRemain : !player.group || ball.type === player.group));
+  const pockets = TABLE.pockets;
+  let best = null;
+
+  for (const target of targets) {
+    for (const pocket of pockets) {
+      const pocketDx = pocket.x - target.x, pocketDy = pocket.y - target.y;
+      const pocketDistance = Math.hypot(pocketDx, pocketDy) || 1;
+      const ghost = { x: target.x - pocketDx / pocketDistance * (cue.radius + target.radius), y: target.y - pocketDy / pocketDistance * (cue.radius + target.radius) };
+      const angle = Math.atan2(ghost.y - cue.y, ghost.x - cue.x);
+      if (firstBallOnRay(cue, match.balls, angle) !== target) continue;
+      if (!computerPathIsClear(cue, ghost, match.balls, new Set([cue.id, target.id])) ||
+          !computerPathIsClear(target, pocket, match.balls, new Set([cue.id, target.id]))) continue;
+      const cueDistance = Math.hypot(ghost.x - cue.x, ghost.y - cue.y);
+      const score = cueDistance + pocketDistance * .55;
+      if (!best || score < best.score) best = { angle, power: Math.min(.92, Math.max(.4, .38 + score / 1500)), score };
+    }
+  }
+  if (best) return { angle: best.angle, power: best.power };
+
+  const closestTarget = targets.reduce((closest, target) => !closest || Math.hypot(target.x - cue.x, target.y - cue.y) < Math.hypot(closest.x - cue.x, closest.y - cue.y) ? target : closest, null);
+  if (closestTarget) {
+    const baseAngle = Math.atan2(closestTarget.y - cue.y, closestTarget.x - cue.x);
+    for (let step = 0; step < 360; step += 1) {
+      const angle = baseAngle + step * Math.PI / 180;
+      if (firstBallOnRay(cue, match.balls, angle) === closestTarget) return { angle, power: .62 };
+    }
+  }
+  for (let step = 0; step < 360; step += 1) {
+    const angle = step * Math.PI / 180;
+    if (!firstBallOnRay(cue, match.balls, angle)) return { angle, power: .45 };
+  }
+  return { angle: Math.PI, power: .45 };
+}
+
+function computerPathIsClear(start, end, balls, ignoredIds) {
+  for (const ball of balls) {
+    if (ignoredIds.has(ball.id) || ball.pocketed) continue;
+    const nearest = segmentDistanceSquared(start.x, start.y, end.x, end.y, ball.x, ball.y);
+    const clearance = (start.radius || BALL_RADIUS) + ball.radius - 1;
+    if (nearest.distanceSquared < clearance * clearance) return false;
+  }
+  return true;
 }
 
 function assignGroups(room, ball, current) {

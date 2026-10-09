@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { TABLE, createRoom, joinRoom, resumeRoom, startMatch, endMatch, applyShot, createRack, detectPocketEntry, updateRoomPhysics } from '../server/gameEngine.js';
+import { TABLE, createRoom, joinRoom, resumeRoom, startMatch, endMatch, addComputerPlayer, chooseComputerShot, applyShot, createRack, detectPocketEntry, updateRoomPhysics } from '../server/gameEngine.js';
 
 describe('room management', () => {
   test('creates a room with a host player', () => {
@@ -20,6 +20,27 @@ describe('room management', () => {
     joinRoom(room, 'socket-2', 'Guest');
     expect(startMatch(room).ok).toBe(true);
     expect(room.status).toBe('playing');
+  });
+
+  test('adds a connected computer player as the second room member', () => {
+    const room = createRoom('Player', 'socket-1');
+    const result = addComputerPlayer(room);
+
+    expect(result.ok).toBe(true);
+    expect(result.player.computer).toBe(true);
+    expect(room.players).toHaveLength(2);
+    expect(startMatch(room).ok).toBe(true);
+  });
+
+  test('computer selects a server-valid opening shot', () => {
+    const room = createRoom('Player', 'socket-1');
+    addComputerPlayer(room); startMatch(room);
+    room.match.turnIndex = 1;
+
+    const shot = chooseComputerShot(room);
+
+    expect(shot).not.toBeNull();
+    expect(applyShot(room, room.players[1].id, shot).ok).toBe(true);
   });
 
   test('ends a match for a room player and returns both players to the lobby', () => {

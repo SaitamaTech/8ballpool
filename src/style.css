@@ -22,6 +22,7 @@ h1,h2,h3,p { margin: 0; }
 h1 { font: 900 clamp(2.5rem, 5vw, 4rem)/1.02 'Arial Black', 'Trebuchet MS', sans-serif; letter-spacing: 0; text-shadow: 0 7px 36px rgba(91,238,177,.17); }
 .subtitle { color: #c4cfc8; margin-top: 12px; }
 .menu-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; max-width: 580px; margin: auto; }
+.menu-grid [data-action="computer"] { grid-column:1/-1; }
 .primary,.secondary,.ghost { min-height: 54px; width: 100%; font-weight: 750; }
 .primary { background: linear-gradient(125deg,var(--primary),var(--primary-strong)); color: #071b13; box-shadow: 0 8px 28px rgba(73,199,154,.22), inset 0 1px rgba(255,255,255,.38); }
 .secondary { background: rgba(255,255,255,.055); color: var(--text); border: 1px solid rgba(255,255,255,.1); }

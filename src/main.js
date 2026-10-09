@@ -20,7 +20,7 @@ function playSound(kind, volume) {
 
 app.innerHTML = `
   <div class="app-shell">
-    <div id="menu-screen" class="screen active"><div class="title-wrap"><p class="eyebrow">Multiplayer Pool</p><h1>8 Ball Pool</h1><p class="subtitle">Rack up. Aim true. Sink the eight.</p></div><div class="menu-grid"><button class="primary" data-action="host">Create Game</button><button class="secondary" data-action="join">Join Game</button><button class="secondary" data-action="settings">Settings</button><button class="secondary" data-action="howto">How to Play</button></div></div>
+    <div id="menu-screen" class="screen active"><div class="title-wrap"><p class="eyebrow">Multiplayer Pool</p><h1>8 Ball Pool</h1><p class="subtitle">Rack up. Aim true. Sink the eight.</p></div><div class="menu-grid"><button class="primary" data-action="computer">Play Computer</button><button class="secondary" data-action="host">Create Game</button><button class="secondary" data-action="join">Join Game</button><button class="secondary" data-action="settings">Settings</button><button class="secondary" data-action="howto">How to Play</button></div></div>
     <div id="host-screen" class="screen hidden"><div class="panel"><h2>Create a room</h2><label>Player name<input id="host-name" value="Player 1" maxlength="18" /></label><button id="host-btn" class="primary">Create Room</button><button class="ghost" data-action="back">Back</button></div></div>
     <div id="join-screen" class="screen hidden"><div class="panel"><h2>Join a room</h2><label>Player name<input id="join-name" value="Guest Player" maxlength="18" /></label><label>Room code<input id="room-code" placeholder="ABCD1" maxlength="10" /></label><button id="join-btn" class="primary">Join</button><button class="ghost" data-action="back">Back</button></div></div>
     <div id="lobby-screen" class="screen hidden"><div class="panel lobby-box"><p class="eyebrow">Game room</p><h2 id="room-code-label">Room</h2><div class="room-meta"><p>Share the room code with a player on the same Wi-Fi network.</p><p>Play head-to-head in real time.</p></div><div id="players-list" class="players-list"></div><div class="lobby-actions"><button id="start-match-btn" class="primary">Start Match</button><button class="ghost" data-action="back">Back</button></div></div></div>
@@ -117,13 +117,14 @@ function updateControls() {
   document.getElementById('control-hint').textContent = enabled
     ? invalidAim ? 'Wrong ball. Aim for your group.' : 'Drag on the table to aim. Set power separately; release never shoots. Tap Shoot to strike.'
     : state.room?.status === 'paused' ? 'Match paused while a player reconnects.'
-      : state.room?.match?.shotInProgress || state.shotRequestPending ? 'Shot accepted — waiting for the balls to settle.' : 'Opponent’s turn — aiming and shot controls are inactive.';
+      : state.room?.match?.shotInProgress || state.shotRequestPending ? 'Shot accepted — waiting for the balls to settle.'
+        : state.room?.players?.[state.room.match.turnIndex]?.computer ? 'Computer is lining up a shot.' : 'Opponent’s turn — aiming and shot controls are inactive.';
 }
 function updateLobby() {
   if (!state.room) return;
   state.myPlayerId = socket.id || state.myPlayerId;
   document.getElementById('room-code-label').textContent = `Room ${state.room.code}`;
-  document.getElementById('players-list').innerHTML = state.room.players.map(p => `<div class="player-row ${p.host ? 'host' : ''}"><span>${escapeHtml(p.name)}</span><span>${p.host ? 'Creator' : 'Guest'}</span></div>`).join('');
+  document.getElementById('players-list').innerHTML = state.room.players.map(p => `<div class="player-row ${p.host ? 'host' : ''}"><span>${escapeHtml(p.name)}</span><span>${p.computer ? 'Computer' : p.host ? 'Creator' : 'Guest'}</span></div>`).join('');
   document.getElementById('start-match-btn').disabled = state.room.players.length < 2;
 }
 function updateHud() {
@@ -131,9 +132,9 @@ function updateHud() {
   const { match, players } = state.room;
   document.getElementById('hud-code').textContent = state.room.code;
   const current = activePlayer();
-  document.getElementById('turn-label').textContent = current ? `${current.name}${current.id === socket.id ? ' · Your turn' : ''}` : 'Waiting';
+  document.getElementById('turn-label').textContent = current ? `${current.name}${current.id === socket.id ? ' · Your turn' : current.computer ? ' · Thinking' : ''}` : 'Waiting';
   document.getElementById('status-label').textContent = state.room.status === 'paused' ? 'Paused' : (match.message || 'Ready');
-  document.getElementById('connection-label').innerHTML = players.length < 2 ? '<i class="offline"></i> Waiting for opponent' : players.every(p => p.connected) ? '<i></i> Both connected' : '<i class="offline"></i> Reconnecting';
+  document.getElementById('connection-label').innerHTML = players.some(p => p.computer) ? '<i></i> Computer ready' : players.length < 2 ? '<i class="offline"></i> Waiting for opponent' : players.every(p => p.connected) ? '<i></i> Both connected' : '<i class="offline"></i> Reconnecting';
   for (let i = 0; i < 2; i += 1) {
     const p = players[i]; const card = document.getElementById(`player-card-${i}`);
     card.classList.toggle('current', !!p && i === match.turnIndex);
@@ -259,6 +260,10 @@ appDialog.addEventListener('cancel', event => { event.preventDefault(); closeApp
 appDialog.addEventListener('click', event => { if (event.target === appDialog) closeAppDialog(false); });
 
 for (const [action, screen] of [['host','host'],['join','join'],['settings','settings'],['howto','howto']]) document.querySelectorAll(`[data-action="${action}"]`).forEach(b => b.addEventListener('click', () => showScreen(screen)));
+document.querySelector('[data-action="computer"]').addEventListener('click', () => {
+  state.localName = document.getElementById('host-name').value.trim() || 'Player 1';
+  socket.emit('start_computer_game', { playerName: state.localName });
+});
 document.querySelectorAll('[data-action="back"]').forEach(b => b.addEventListener('click', () => showScreen(state.room ? 'lobby' : 'menu')));
 document.getElementById('host-btn').addEventListener('click', () => { state.localName = document.getElementById('host-name').value.trim() || 'Player 1'; socket.emit('host_room', { playerName: state.localName }); });
 document.getElementById('join-btn').addEventListener('click', () => { state.localName = document.getElementById('join-name').value.trim() || 'Guest Player'; socket.emit('join_room', { code: document.getElementById('room-code').value.trim().toUpperCase(), playerName: state.localName }); });
