@@ -243,11 +243,18 @@ export class PoolRenderer {
     ctx.moveTo(882, 111); ctx.lineTo(882, 222); ctx.moveTo(882, 338); ctx.lineTo(882, 449); ctx.stroke();
     const pockets = this.pocketPoints();
     for (const [px, py, r] of pockets) {
-      ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.8)'; ctx.shadowBlur = 8;
-      const rim = ctx.createRadialGradient(px - 2, py - 3, r * .3, px, py, r);
-      rim.addColorStop(0, '#050907'); rim.addColorStop(.7, '#080b09'); rim.addColorStop(.82, '#a37a4a'); rim.addColorStop(1, '#412a18');
-      ctx.fillStyle = rim; ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-      ctx.fillStyle = '#020403'; ctx.beginPath(); ctx.ellipse(px, py + 3, r * .7, r * .62, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath(); ctx.arc(px, py, r + 5, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+
+      ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.8)'; ctx.shadowBlur = 12;
+      const rim = ctx.createRadialGradient(px - 2, py - 3, r * .28, px, py, r + 10);
+      rim.addColorStop(0, '#070a0a'); rim.addColorStop(.45, '#0d110f'); rim.addColorStop(.7, '#312311'); rim.addColorStop(1, '#1f1208');
+      ctx.fillStyle = rim; ctx.beginPath(); ctx.arc(px, py, r + 9, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+
+      ctx.fillStyle = '#010403'; ctx.beginPath(); ctx.ellipse(px, py + 3, r * .78, r * .66, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,236,191,.14)'; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.arc(px, py, r * .82, 0, Math.PI * 2); ctx.stroke();
     }
     const diamonds = [180, 285, 390, 590, 695, 800];
     for (const dx of diamonds) for (const dy of [51, 509]) this.drawSight(ctx, dx, dy);
