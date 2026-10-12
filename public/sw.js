@@ -1,4 +1,4 @@
-const CACHE_NAME = 'local-8-ball-cache-v14';
+const CACHE_NAME = 'local-8-ball-cache-v15';
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/favicon-live.svg', '/saitama-mark.svg', '/home-background-premium-b.jpg', '/cue-strike.wav', '/pocket-drop.wav'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)));
@@ -9,12 +9,37 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 self.addEventListener('fetch', event => {
-  if (event.request.method !== 'GET') return;
-  event.respondWith(caches.match(event.request).then(cached => {
+  const request = event.request;
+  if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
+
+  if (request.mode === 'navigate') {
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(request);
+        if (response.ok) {
+          const copy = response.clone();
+          event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.put(request, copy)));
+        }
+        return response;
+      } catch {
+        return await caches.match('/index.html') || Response.error();
+      }
+    })());
+    return;
+  }
+
+  event.respondWith((async () => {
+    const cached = await caches.match(request);
     if (cached) return cached;
-    return fetch(event.request).then(response => {
-      if (response.ok) caches.open(CACHE_NAME).then(cache => cache.put(event.request, response.clone()));
+    try {
+      const response = await fetch(request);
+      if (response.ok) {
+        const copy = response.clone();
+        event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.put(request, copy)));
+      }
       return response;
-    }).catch(() => caches.match('/index.html'));
-  }));
+    } catch {
+      return Response.error();
+    }
+  })());
 });

@@ -210,6 +210,23 @@ button:active:not(:disabled) { transform:scale(.96); }
 .player-card { background:rgba(10,15,12,.78); border-color:rgba(220,196,151,.15); backdrop-filter:blur(8px); }
 .player-card b { color:#e3c37e; }
 .player-card.current { border-color:rgba(231,200,132,.76); }
+.chat-toolbar { display:flex; align-items:center; justify-content:flex-end; gap:12px; min-height:34px; margin:0 2px 6px; }
+.chat-toolbar[hidden],.chat-panel[hidden] { display:none !important; }
+#chat-presence { color:#c9beaa; font-size:.68rem; }
+#chat-toggle { width:auto; min-height:34px; padding:0 12px; font-size:.74rem; }
+#chat-unread:not([hidden]) { display:inline-grid; place-items:center; min-width:17px; height:17px; margin-left:5px; padding:0 4px; border-radius:10px; background:#c58c52; color:#17120b; font-size:.62rem; }
+.chat-panel { display:grid; grid-template-rows:minmax(74px,1fr) auto; gap:8px; max-height:230px; margin:0 2px 10px; padding:9px; border:1px solid rgba(220,187,119,.24); border-radius:8px; background:rgba(8,13,10,.82); box-shadow:inset 0 1px rgba(255,255,255,.04); backdrop-filter:blur(10px); }
+.chat-feed { display:flex; flex-direction:column; align-items:flex-start; gap:6px; min-height:74px; max-height:150px; overflow:auto; padding:2px 3px; }
+.chat-message { max-width:min(82%,520px); padding:6px 9px; border:1px solid rgba(220,187,119,.15); border-radius:6px 9px 9px 9px; background:rgba(255,255,255,.055); }
+.chat-message.mine { align-self:flex-end; border-color:rgba(219,184,116,.28); background:rgba(139,99,47,.2); }
+.chat-message-meta { display:flex; align-items:center; gap:9px; margin-bottom:3px; }
+.chat-message-meta strong { color:#e7c987; font-size:.67rem; }
+.chat-message-meta time { color:#a99d88; font-size:.59rem; }
+.chat-message > p { color:#eee7d9; font-size:.76rem; line-height:1.35; overflow-wrap:anywhere; white-space:pre-wrap; }
+.chat-notice { align-self:center; color:#c4b89f; font-size:.68rem; }
+.chat-compose { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; }
+.chat-compose input { min-width:0; height:40px; margin:0; padding:0 11px; border-radius:6px; font-size:.78rem; }
+.chat-compose button { width:auto; min-width:66px; min-height:40px; padding:0 13px; font-size:.76rem; }
 .timer-ring { background:conic-gradient(#d2ad68 var(--timer-progress),rgba(255,255,255,.12) 0); }
 .timer-ring.warning { background:conic-gradient(#e6a94f var(--timer-progress),rgba(255,255,255,.12) 0); }
 .connection i { background:#d2ad68; box-shadow:0 0 8px #d2ad68; }

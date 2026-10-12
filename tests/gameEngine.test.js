@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { TABLE, createRoom, joinRoom, resumeRoom, startMatch, startChallenge, getChallenges, endMatch, removePlayerFromRoom, addComputerPlayer, chooseComputerShot, applyShot, placeCueBall, createRack, detectPocketEntry, updateRoomPhysics } from '../server/gameEngine.js';
+import { TABLE, createRoom, joinRoom, resumeRoom, startMatch, startChallenge, getChallenges, endMatch, removePlayerFromRoom, addComputerPlayer, chooseComputerShot, applyShot, placeCueBall, validateRoomChatMessage, createRack, detectPocketEntry, updateRoomPhysics } from '../server/gameEngine.js';
 
 describe('room management', () => {
   test('creates a room with a host player', () => {
@@ -12,6 +12,18 @@ describe('room management', () => {
     const room = createRoom('Host', 'socket-1');
     expect(joinRoom(room, 'socket-2', 'Guest').ok).toBe(true);
     expect(joinRoom(room, 'socket-3', 'Extra').ok).toBe(false);
+  });
+
+  test('validates room chat membership and bounds message text', () => {
+    const room = createRoom('Host', 'socket-1');
+    joinRoom(room, 'socket-2', 'Guest');
+
+    expect(validateRoomChatMessage(room, 'stranger', 'hello').ok).toBe(false);
+    expect(validateRoomChatMessage(room, 'socket-2', '  Hello\n there  ', 123)).toMatchObject({
+      ok: true, message: { playerName: 'Guest', text: 'Hello there', sentAt: 123 },
+    });
+    expect(validateRoomChatMessage(room, 'socket-2', 'x'.repeat(200)).message.text).toHaveLength(160);
+    expect(validateRoomChatMessage(room, 'socket-2', '   ').ok).toBe(false);
   });
 
   test('starts a match only when two players are present', () => {

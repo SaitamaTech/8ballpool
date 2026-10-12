@@ -17,6 +17,7 @@ A browser-based 8-ball pool game with room-code multiplayer, trick-shot challeng
 - Added a host-authoritative 30-second turn clock. It continues during aiming, pauses for shot physics, passes the turn once on timeout, and is shown as a shared countdown/progress ring with warning colors.
 - Added player session recovery; a disconnected active match pauses and resumes with the same player and remaining shot-clock time.
 - Added a live player/turn/connection HUD and remaining-ball lists. Groups begin unassigned and the server assigns them after a non-foul object-ball pot on an open table.
+- Added private in-room chat for human opponents, with server-validated membership, message length limits, rate limiting, timestamps, and unread counts.
 - Corrected the old velocity scaling so server speeds are treated as pixels per second and do not jump hundreds of pixels per frame.
 
 ## Architecture
@@ -63,7 +64,7 @@ The free Render plan may sleep when idle, so the first visit after inactivity ca
 
 ## Automated verification performed
 
-- `npm test`: **36 tests passed**, including pocket approaches, foul penalties and cue placement, timer timeout, reconnect recovery, and legal 8-ball resolution.
+- `npm test`: **38 tests passed**, including room chat validation, pocket approaches, foul penalties and cue placement, timer timeout, reconnect recovery, and legal 8-ball resolution.
 - `npm run build`: **passed**.
 - Local HTTP smoke test: built app and Socket.IO endpoint served successfully.
 - Two-client Socket.IO smoke test: room creation/join, synchronized 30-second timer, one strike event per client, shot-state synchronization, and timer pause during shot passed.

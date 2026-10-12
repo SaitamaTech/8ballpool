@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
-import { createRoom, getRoomByCode, joinRoom, resumeRoom, serializeRoom, startMatch, startChallenge, getChallenges, endMatch, removePlayerFromRoom, addComputerPlayer, chooseComputerShot, updateRoomPhysics, applyShot, placeCueBall, SHOT_IMPACT_DELAY } from './gameEngine.js';
+import { createRoom, getRoomByCode, joinRoom, resumeRoom, serializeRoom, startMatch, startChallenge, getChallenges, endMatch, removePlayerFromRoom, addComputerPlayer, chooseComputerShot, updateRoomPhysics, applyShot, placeCueBall, validateRoomChatMessage, SHOT_IMPACT_DELAY } from './gameEngine.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,7 +26,10 @@ if (hasBuiltClient) {
     res.type('html').send(html);
   });
   app.use(express.static(distFolder));
-  app.get(/^(.*)$/, (req, res) => { res.sendFile(path.join(distFolder, 'index.html')); });
+  app.get(/^(.*)$/, (req, res) => {
+    if (path.extname(req.path)) return res.status(404).type('text/plain').send('Asset not found.');
+    res.sendFile(path.join(distFolder, 'index.html'));
+  });
 }
 
 function placeComputerCueBall(room, player) {
@@ -40,7 +43,20 @@ function placeComputerCueBall(room, player) {
 }
 
 io.on('connection', socket => {
+  const chatTimestamps = [];
   socket.on('get_challenges', () => socket.emit('challenge_list', getChallenges()));
+
+  socket.on('chat_message', ({ code, text } = {}) => {
+    const room = getRoomByCode(rooms, code);
+    if (!room) { socket.emit('chat_error', { message: 'Room not found.' }); return; }
+    const now = Date.now();
+    while (chatTimestamps.length && now - chatTimestamps[0] >= 5000) chatTimestamps.shift();
+    if (chatTimestamps.length >= 4) { socket.emit('chat_error', { message: 'Please wait before sending another message.' }); return; }
+    const result = validateRoomChatMessage(room, socket.id, text, now);
+    if (!result.ok) { socket.emit('chat_error', { message: result.error }); return; }
+    chatTimestamps.push(now);
+    io.to(room.code).emit('chat_message', result.message);
+  });
 
   socket.on('host_room', ({ playerName }) => {
     const room = createRoom(playerName || 'Player 1', socket.id);

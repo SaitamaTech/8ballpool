@@ -562,3 +562,13 @@ function finalizeChallengeShot(room, player, pocketed, cueScratch, now) {
 }
 
 export function getRoomByCode(rooms, code) { return rooms.get(String(code || '').toUpperCase()); }
+
+export function validateRoomChatMessage(room, socketId, rawMessage, sentAt = Date.now()) {
+  const player = room?.players.find(candidate => candidate.id === socketId && candidate.connected);
+  if (!player) return { ok: false, error: 'Only connected room players can chat.' };
+  if (room.mode === 'challenge') return { ok: false, error: 'Chat is unavailable in solo challenges.' };
+  if (typeof rawMessage !== 'string') return { ok: false, error: 'Enter a text message.' };
+  const text = rawMessage.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+  if (!text) return { ok: false, error: 'Enter a text message.' };
+  return { ok: true, message: { code: room.code, playerId: player.id, playerName: player.name, text, sentAt } };
+}

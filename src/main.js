@@ -61,6 +61,8 @@ app.innerHTML = `
       <div class="hud header-row"><div><p class="eyebrow">Room</p><h3 id="hud-code">—</h3></div><div><p class="eyebrow">At the table</p><h3 id="turn-label">—</h3></div><div><p class="eyebrow">Match status</p><h3 id="status-label">Waiting</h3></div><div class="timer-wrap"><div id="timer-ring" class="timer-ring" role="timer" aria-label="30 seconds remaining"><span id="timer-digits">30</span></div><div class="timer-meta"><p class="eyebrow">Shot clock</p><h3 id="timer-player">Waiting</h3></div></div><button id="end-game-btn" class="danger">End Game</button></div>
       <div id="challenge-hud" class="challenge-hud" hidden><div><p class="eyebrow">Trick shot</p><h3 id="challenge-title"></h3></div><p id="challenge-description"></p><strong id="challenge-progress"></strong></div>
       <div class="players-hud"><div id="player-card-0" class="player-card"><span id="player-0-name">Player 1</span><b id="player-0-group">OPEN TABLE</b><div id="player-0-balls" class="remaining-balls">Groups not assigned</div></div><div id="connection-label" class="connection"><i></i> Connecting</div><div id="player-card-1" class="player-card"><span id="player-1-name">Player 2</span><b id="player-1-group">OPEN TABLE</b><div id="player-1-balls" class="remaining-balls">Groups not assigned</div></div></div>
+      <div class="chat-toolbar"><span id="chat-presence">Room chat</span><button id="chat-toggle" class="secondary" type="button" aria-expanded="false" aria-controls="chat-panel">Chat <span id="chat-unread" hidden></span></button></div>
+      <section id="chat-panel" class="chat-panel" aria-label="Room chat" hidden><div id="chat-feed" class="chat-feed" role="log" aria-live="polite" aria-relevant="additions"></div><form id="chat-form" class="chat-compose"><input id="chat-input" maxlength="160" autocomplete="off" placeholder="Message your opponent" aria-label="Chat message" /><button class="primary" type="submit">Send</button></form></section>
       <div class="table-wrap"><canvas id="game-canvas" width="980" height="560" aria-label="Pool table. Drag to aim; dragging does not shoot." ></canvas></div>
       <div class="controls-panel"><div class="power-control"><label for="power-slider"><span>Shot power</span><strong id="power-readout">42%</strong></label><input id="power-slider" type="range" min="8" max="100" value="42" aria-label="Shot power, applied to the cue pull-back" /><div class="power-track"><i id="power-meter"></i></div><div class="power-scale"><span>SOFT</span><span>FIRM</span></div></div><div class="shot-actions"><button id="cancel-shot-btn" class="ghost">Cancel charge</button><button id="shoot-btn" class="primary">Shoot</button></div></div>
       <p id="control-hint" class="control-hint">Drag on the table to aim. Set power separately; release never shoots. Tap Shoot to strike.</p>
@@ -95,6 +97,13 @@ const shootButton = document.getElementById('shoot-btn');
 const cancelButton = document.getElementById('cancel-shot-btn');
 const endGameButton = document.getElementById('end-game-btn');
 const challengeList = document.getElementById('challenge-list');
+const chatToggle = document.getElementById('chat-toggle');
+const chatUnread = document.getElementById('chat-unread');
+const chatPanel = document.getElementById('chat-panel');
+const chatFeed = document.getElementById('chat-feed');
+const chatForm = document.getElementById('chat-form');
+const chatInput = document.getElementById('chat-input');
+const chatPresence = document.getElementById('chat-presence');
 const appDialog = document.getElementById('app-dialog');
 const matchResultDialog = document.getElementById('match-result-dialog');
 const dialogTitle = document.getElementById('dialog-title');
@@ -132,6 +141,8 @@ function updateGraphicsMode(mode, persist = false) {
 updateGraphicsMode(localStorage.getItem('pool-graphics-mode') || 'balanced');
 graphicsModeSelect.addEventListener('change', event => updateGraphicsMode(event.target.value, true));
 let animationFrame = null;
+let chatRoomCode = null;
+let chatUnreadCount = 0;
 let shotResponseTimer = null;
 function clearShotResponseTimer() {
   if (shotResponseTimer !== null) window.clearTimeout(shotResponseTimer);
@@ -181,6 +192,39 @@ function openChallenges() {
 }
 function renderChallenges(challenges) {
   challengeList.innerHTML = challenges.map((challenge, index) => `<button class="challenge-card" data-challenge-id="${escapeHtml(challenge.id)}"><span class="challenge-index">0${index + 1}</span><span class="challenge-copy"><strong>${escapeHtml(challenge.title)}</strong><small>${escapeHtml(challenge.description)}</small></span><span class="challenge-attempts">${challenge.shots} shots</span></button>`).join('');
+}
+function resetChat(room) {
+  chatRoomCode = room?.code || null;
+  chatFeed.replaceChildren();
+  chatUnreadCount = 0;
+  chatUnread.hidden = true;
+  chatToggle.setAttribute('aria-expanded', 'false');
+  chatPanel.hidden = true;
+}
+function appendChatNotice(text) {
+  const notice = document.createElement('p');
+  notice.className = 'chat-notice';
+  notice.textContent = text;
+  chatFeed.append(notice);
+  chatFeed.scrollTop = chatFeed.scrollHeight;
+}
+function appendChatMessage(message) {
+  if (!state.room || message.code !== state.room.code || state.room.mode === 'challenge') return;
+  const entry = document.createElement('article');
+  entry.className = `chat-message${message.playerId === socket.id ? ' mine' : ''}`;
+  const meta = document.createElement('div'); meta.className = 'chat-message-meta';
+  const author = document.createElement('strong'); author.textContent = message.playerName;
+  const time = document.createElement('time'); time.dateTime = new Date(message.sentAt).toISOString();
+  time.textContent = new Date(message.sentAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const text = document.createElement('p'); text.textContent = message.text;
+  meta.append(author, time); entry.append(meta, text); chatFeed.append(entry);
+  while (chatFeed.children.length > 60) chatFeed.firstElementChild.remove();
+  chatFeed.scrollTop = chatFeed.scrollHeight;
+  if (message.playerId !== socket.id && chatPanel.hidden) {
+    chatUnreadCount += 1;
+    chatUnread.textContent = String(chatUnreadCount);
+    chatUnread.hidden = false;
+  }
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function activePlayer(room = state.room) { return room?.players?.[room.match.turnIndex] || null; }
@@ -250,6 +294,8 @@ function updateHud() {
   document.getElementById('turn-label').textContent = current ? `${current.name}${current.id === socket.id ? ' · Your turn' : current.computer ? ' · Thinking' : ''}` : 'Waiting';
   document.getElementById('status-label').textContent = state.room.status === 'paused' ? 'Paused' : (match.message || 'Ready');
   document.getElementById('connection-label').innerHTML = !socket.connected ? '<i class="offline"></i> Reconnecting' : state.room.mode === 'challenge' ? '<i></i> Solo challenge' : players.some(p => p.computer) ? '<i></i> Computer ready' : players.length < 2 ? '<i class="offline"></i> Waiting for opponent' : players.every(p => p.connected) ? '<i></i> Both connected' : '<i class="offline"></i> Reconnecting';
+  chatToggle.closest('.chat-toolbar').hidden = state.room.mode === 'challenge' || players.some(player => player.computer);
+  chatPresence.textContent = socket.connected ? 'Private room chat' : 'Reconnecting';
   for (let i = 0; i < 2; i += 1) {
     const p = players[i]; const card = document.getElementById(`player-card-${i}`);
     card.classList.toggle('current', !!p && i === match.turnIndex);
@@ -433,6 +479,21 @@ powerSlider.addEventListener('input', event => setPower(event.target.value));
 shootButton.addEventListener('click', shoot);
 cancelButton.addEventListener('click', cancelCharge);
 endGameButton.addEventListener('click', endGame);
+chatToggle.addEventListener('click', () => {
+  chatPanel.hidden = !chatPanel.hidden;
+  chatToggle.setAttribute('aria-expanded', String(!chatPanel.hidden));
+  if (!chatPanel.hidden) {
+    chatUnreadCount = 0; chatUnread.hidden = true; chatInput.focus();
+  }
+});
+chatForm.addEventListener('submit', event => {
+  event.preventDefault();
+  const text = chatInput.value.trim();
+  if (!text) return;
+  if (!socket.connected || !state.room) { appendChatNotice('Reconnecting. Your message was not sent.'); return; }
+  socket.emit('chat_message', { code: state.room.code, text });
+  chatInput.value = '';
+});
 dialogConfirm.addEventListener('click', () => closeAppDialog(true));
 dialogCancel.addEventListener('click', () => closeAppDialog(false));
 appDialog.addEventListener('cancel', event => { event.preventDefault(); closeAppDialog(false); });
@@ -488,6 +549,7 @@ socket.on('connect', () => {
 });
 socket.on('room_joined', ({ room, sessionToken }) => {
   clearShotResponseTimer();
+  if (chatRoomCode !== room.code) resetChat(room);
   state.myPlayerId = socket.id; state.room = room; state.aim = null; state.shotRequestPending = false;
   state.roomReceivedAt = performance.now();
   state.timerSnapshotMs = room.match.timer?.remainingMs ?? 30_000; state.timerSnapshotAt = performance.now();
@@ -503,6 +565,8 @@ socket.on('room_joined', ({ room, sessionToken }) => {
 });
 socket.on('session_token', ({ code, token }) => localStorage.setItem('pool-session', JSON.stringify({ code, token })));
 socket.on('resume_error', () => localStorage.removeItem('pool-session'));
+socket.on('chat_message', appendChatMessage);
+socket.on('chat_error', ({ message }) => appendChatNotice(message || 'Chat message was not sent.'));
 socket.on('shot_started', shot => {
   if (!state.room || shot.code !== state.room.code) return;
   clearShotResponseTimer();
