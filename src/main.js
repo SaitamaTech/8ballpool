@@ -7,7 +7,7 @@ const socket = io({ autoConnect: true, transports: ['websocket'] });
 const state = {
   screen: 'menu', room: null, aim: null, myPlayerId: null, localName: '', dragging: false,
   pointerId: null, cuePlacement: null, shotRequestPending: false, playedShots: new Set(), pocketedIds: new Set(), lastRoomCode: null, lastShotCount: 0,
-  timerSnapshotMs: 30_000, timerSnapshotAt: performance.now(), roomReceivedAt: performance.now(),
+  timerSnapshotMs: 30_000, timerSnapshotAt: performance.now(), roomReceivedAt: performance.now(), matchResultKey: null,
 };
 const BALL_COLORS = { 1:'#f5d32f', 2:'#1357b5', 3:'#d5222b', 4:'#67238c', 5:'#f28020', 6:'#198347', 7:'#852525', 8:'#101316', 9:'#f5d32f', 10:'#1357b5', 11:'#d5222b', 12:'#67238c', 13:'#f28020', 14:'#198347', 15:'#852525' };
 const sounds = { cue: new Audio('/cue-strike.wav'), pocket: new Audio('/pocket-drop.wav') };
@@ -72,6 +72,18 @@ app.innerHTML = `
     <div class="dialog-panel"><div class="dialog-ball" aria-hidden="true">8</div><p class="eyebrow">Saitama 8 Ball Pool</p><h2 id="dialog-title">Message</h2><p id="dialog-message"></p><div class="dialog-actions"><button id="dialog-cancel" class="ghost">Cancel</button><button id="dialog-confirm" class="primary">OK</button></div></div>
   </dialog>`;
 
+app.insertAdjacentHTML('beforeend', `
+  <dialog id="match-result-dialog" class="match-result-dialog" aria-labelledby="match-result-title" aria-describedby="match-result-message">
+    <div class="match-result-panel">
+      <div class="result-burst" aria-hidden="true"><i style="--angle:-24deg;--delay:.02s"></i><i style="--angle:18deg;--spark:#e87c4e;--delay:.08s"></i><i style="--angle:52deg;--delay:.13s"></i><i style="--angle:89deg;--spark:#69c89b;--delay:.05s"></i><i style="--angle:126deg;--delay:.16s"></i><i style="--angle:164deg;--spark:#e87c4e;--delay:.1s"></i><i style="--angle:204deg;--delay:.04s"></i><i style="--angle:244deg;--spark:#69c89b;--delay:.18s"></i><i style="--angle:287deg;--delay:.09s"></i><i style="--angle:326deg;--spark:#e87c4e;--delay:.14s"></i></div>
+      <div class="result-emblem" aria-hidden="true"><span>8</span></div>
+      <p id="match-result-label" class="eyebrow">Match complete</p>
+      <h2 id="match-result-title"></h2>
+      <p id="match-result-message" class="match-result-message"></p>
+      <div class="match-result-actions"><button id="play-again-btn" class="primary">Play Again</button><button id="return-lobby-btn" class="ghost">Room Lobby</button></div>
+    </div>
+  </dialog>`);
+
 const canvas = document.getElementById('game-canvas');
 const renderer = new PoolRenderer(canvas);
 const graphicsModeSelect = document.getElementById('graphics-mode');
@@ -84,10 +96,16 @@ const cancelButton = document.getElementById('cancel-shot-btn');
 const endGameButton = document.getElementById('end-game-btn');
 const challengeList = document.getElementById('challenge-list');
 const appDialog = document.getElementById('app-dialog');
+const matchResultDialog = document.getElementById('match-result-dialog');
 const dialogTitle = document.getElementById('dialog-title');
 const dialogMessage = document.getElementById('dialog-message');
 const dialogCancel = document.getElementById('dialog-cancel');
 const dialogConfirm = document.getElementById('dialog-confirm');
+const matchResultLabel = document.getElementById('match-result-label');
+const matchResultTitle = document.getElementById('match-result-title');
+const matchResultMessage = document.getElementById('match-result-message');
+const playAgainButton = document.getElementById('play-again-btn');
+const returnLobbyButton = document.getElementById('return-lobby-btn');
 const screens = Object.fromEntries(['menu','host','join','lobby','challenges','game','settings','howto'].map(n => [n, document.getElementById(`${n}-screen`)]));
 function updateCueStyle(styleName, persist = false) {
   renderer.setCueStyle(styleName);
@@ -370,6 +388,21 @@ function showChallengeResult(room) {
     if (state.room?.code === room.code && state.room.status === 'finished') exitChallenge();
   });
 }
+function showMatchResult(room) {
+  if (room.mode === 'challenge' || room.status !== 'finished') return;
+  const resultKey = `${room.code}:${room.match.shotCount}:${room.match.winner || 'draw'}`;
+  if (state.matchResultKey === resultKey && matchResultDialog.open) return;
+  state.matchResultKey = resultKey;
+  const localPlayer = room.players.find(player => player.id === socket.id);
+  const won = !!localPlayer && localPlayer.name === room.match.winner;
+  matchResultDialog.classList.toggle('victory', won);
+  matchResultLabel.textContent = won ? 'A clean finish' : 'Match complete';
+  matchResultTitle.textContent = won ? 'You win!' : room.match.winner ? `${room.match.winner} wins` : 'Match over';
+  matchResultMessage.textContent = won ? 'The table is yours. Ready for another rack?' : room.match.message || 'Ready for a rematch?';
+  playAgainButton.disabled = !socket.connected;
+  returnLobbyButton.disabled = !socket.connected;
+  if (!matchResultDialog.open) matchResultDialog.showModal();
+}
 
 canvas.addEventListener('pointerdown', event => {
   if (!canControl() && !canPlaceCueBall()) return;
@@ -404,6 +437,18 @@ dialogConfirm.addEventListener('click', () => closeAppDialog(true));
 dialogCancel.addEventListener('click', () => closeAppDialog(false));
 appDialog.addEventListener('cancel', event => { event.preventDefault(); closeAppDialog(false); });
 appDialog.addEventListener('click', event => { if (event.target === appDialog) closeAppDialog(false); });
+matchResultDialog.addEventListener('cancel', event => event.preventDefault());
+playAgainButton.addEventListener('click', () => {
+  if (!socket.connected || state.room?.status !== 'finished') return;
+  playAgainButton.disabled = true; returnLobbyButton.disabled = true;
+  matchResultMessage.textContent = 'Setting up a fresh rack...';
+  socket.emit('start_match', { code: state.room.code });
+});
+returnLobbyButton.addEventListener('click', () => {
+  if (!socket.connected || state.room?.status !== 'finished') return;
+  matchResultDialog.close();
+  endGame();
+});
 
 for (const [action, screen] of [['host','host'],['join','join'],['settings','settings'],['howto','howto']]) document.querySelectorAll(`[data-action="${action}"]`).forEach(b => b.addEventListener('click', () => showScreen(screen)));
 document.querySelector('[data-action="computer"]').addEventListener('click', () => {
@@ -425,11 +470,13 @@ document.getElementById('start-match-btn').addEventListener('click', () => { if 
 
 socket.on('connect', () => {
   state.myPlayerId = socket.id;
+  if (matchResultDialog.open) { playAgainButton.disabled = false; returnLobbyButton.disabled = false; }
   updateLobby(); updateHud(); updateControls();
 });
 socket.on('disconnect', () => {
   clearShotResponseTimer();
   state.shotRequestPending = false; state.aim = null; state.cuePlacement = null;
+  if (matchResultDialog.open) { playAgainButton.disabled = true; returnLobbyButton.disabled = true; }
   updateHud(); updateControls();
 });
 socket.on('challenge_list', renderChallenges);
@@ -447,9 +494,10 @@ socket.on('room_joined', ({ room, sessionToken }) => {
   if (sessionToken) localStorage.setItem('pool-session', JSON.stringify({ code: room.code, token: sessionToken }));
   state.lastRoomCode = room.code; state.lastShotCount = room.match.shotCount || 0;
   state.pocketedIds = new Set(room.match.balls.filter(b => b.pocketed).map(b => b.id));
-  if (room.status === 'playing' || (room.mode === 'challenge' && room.status === 'finished')) {
+  if (room.status === 'playing' || room.status === 'finished') {
     showScreen('game'); updateHud(); updateControls(); render();
-    showChallengeResult(room);
+    if (room.mode === 'challenge') showChallengeResult(room);
+    else showMatchResult(room);
   }
   else { showScreen('lobby'); updateLobby(); }
 });
@@ -495,9 +543,25 @@ socket.on('state_update', room => {
   if (room.status === 'playing' || room.status === 'finished') showScreen('game');
   else if (room.status === 'waiting') showScreen('lobby');
   render();
-  if (challengeJustFinished) showChallengeResult(room);
+  if (room.status === 'playing') {
+    state.matchResultKey = null;
+    if (matchResultDialog.open) matchResultDialog.close();
+    playAgainButton.disabled = false; returnLobbyButton.disabled = false;
+  }
+  if (room.status === 'finished') {
+    if (room.mode === 'challenge' && challengeJustFinished) showChallengeResult(room);
+    else showMatchResult(room);
+  }
 });
-socket.on('room_error', message => { clearShotResponseTimer(); state.shotRequestPending = false; updateControls(); showAppDialog({ title: 'Room update', message }); });
+socket.on('room_error', message => {
+  clearShotResponseTimer(); state.shotRequestPending = false; updateControls();
+  if (matchResultDialog.open && state.room?.status === 'finished') {
+    playAgainButton.disabled = !socket.connected; returnLobbyButton.disabled = !socket.connected;
+    matchResultMessage.textContent = message;
+    return;
+  }
+  showAppDialog({ title: 'Room update', message });
+});
 socket.on('state_error', message => { clearShotResponseTimer(); state.shotRequestPending = false; updateControls(); showAppDialog({ title: 'Shot unavailable', message }); });
 window.addEventListener('resize', () => { renderer.resize(); render(); });
 window.addEventListener('orientationchange', () => requestAnimationFrame(() => { renderer.resize(); render(); }));

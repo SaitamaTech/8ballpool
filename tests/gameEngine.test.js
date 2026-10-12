@@ -22,6 +22,17 @@ describe('room management', () => {
     expect(room.status).toBe('playing');
   });
 
+  test('allows a rematch after completion but rejects duplicate starts during play', () => {
+    const room = createRoom('Host', 'socket-1');
+    joinRoom(room, 'socket-2', 'Guest');
+    expect(startMatch(room).ok).toBe(true);
+    expect(startMatch(room).ok).toBe(false);
+
+    room.status = 'finished'; room.match.status = 'finished';
+    expect(startMatch(room).ok).toBe(true);
+    expect(room.status).toBe('playing');
+  });
+
   test('adds a connected computer player as the second room member', () => {
     const room = createRoom('Player', 'socket-1');
     const result = addComputerPlayer(room);

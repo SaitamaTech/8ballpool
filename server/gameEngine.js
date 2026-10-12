@@ -127,6 +127,7 @@ export function resumeRoom(room, socketId, token) {
 }
 
 export function startMatch(room) {
+  if (!['waiting', 'finished'].includes(room?.status)) return { ok: false, error: 'A match is already active.' };
   if (room.players.length < 2 || room.players.some(player => !player.connected)) return { ok: false, error: 'Two connected players are required to start a match.' };
   room.status = 'playing'; room.resumeStatus = null; room.match = createGameState(); room.match.status = 'playing';
   room.players.forEach(p => { p.group = null; p.score = 0; });

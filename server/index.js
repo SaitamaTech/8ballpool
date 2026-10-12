@@ -95,6 +95,7 @@ io.on('connection', socket => {
   socket.on('start_match', ({ code }) => {
     const room = getRoomByCode(rooms, code);
     if (!room) { socket.emit('room_error', 'Room was not found.'); return; }
+    if (room.status === 'playing') return;
     const result = startMatch(room);
     if (!result.ok) { socket.emit('room_error', result.error); return; }
     room.finishedBroadcast = false;
