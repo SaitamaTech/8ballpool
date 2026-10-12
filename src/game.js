@@ -298,9 +298,9 @@ export class PoolRenderer {
       if (strikeProgress <= .5) start = restingGap - (restingGap - ball.radius - 1) * ease(strikeProgress / .5);
       else start = ball.radius + 1 + (restingGap - ball.radius - 1) * .58 * ease((strikeProgress - .5) / .38);
     }
-    const length = 225;
+    const length = 310;
     ctx.save(); ctx.translate(x, y); ctx.rotate(angle); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    const tip = -start, shaftBack = tip - 145, buttBack = tip - length;
+    const tip = -start, shaftBack = tip - 200, buttBack = tip - length;
     ctx.save(); ctx.translate(2, 4); ctx.fillStyle = 'rgba(0,0,0,.38)';
     ctx.beginPath(); ctx.moveTo(tip, -2.5); ctx.lineTo(tip - 10, -3.3); ctx.lineTo(shaftBack, -4.4); ctx.lineTo(shaftBack - 7, -6.5); ctx.lineTo(buttBack, -8.1); ctx.lineTo(buttBack, 8.1); ctx.lineTo(shaftBack - 7, 6.5); ctx.lineTo(shaftBack, 4.4); ctx.lineTo(tip - 10, 3.3); ctx.lineTo(tip, 2.5); ctx.closePath(); ctx.fill(); ctx.restore();
     const lacquer = ctx.createLinearGradient(0, -9, 0, 9);

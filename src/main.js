@@ -74,6 +74,7 @@ app.innerHTML = `
 
 const canvas = document.getElementById('game-canvas');
 const renderer = new PoolRenderer(canvas);
+const graphicsModeSelect = document.getElementById('graphics-mode');
 const cueStyleSelect = document.getElementById('cue-style');
 const cuePreview = document.getElementById('cue-preview');
 const cueStyleLabel = document.getElementById('cue-style-label');
@@ -102,11 +103,29 @@ function updateCueStyle(styleName, persist = false) {
 }
 updateCueStyle(localStorage.getItem('pool-cue-style') || 'maple');
 cueStyleSelect.addEventListener('change', event => updateCueStyle(event.target.value, true));
+let renderIntervalMs = 1000 / 30;
+let lastRenderedAt = 0;
+function updateGraphicsMode(mode, persist = false) {
+  const selectedMode = mode === 'performance' ? 'performance' : 'balanced';
+  graphicsModeSelect.value = selectedMode;
+  renderIntervalMs = selectedMode === 'performance' ? 1000 / 24 : 1000 / 30;
+  if (persist) localStorage.setItem('pool-graphics-mode', selectedMode);
+}
+updateGraphicsMode(localStorage.getItem('pool-graphics-mode') || 'balanced');
+graphicsModeSelect.addEventListener('change', event => updateGraphicsMode(event.target.value, true));
 let animationFrame = null;
-function animateGame() {
+let shotResponseTimer = null;
+function clearShotResponseTimer() {
+  if (shotResponseTimer !== null) window.clearTimeout(shotResponseTimer);
+  shotResponseTimer = null;
+}
+function animateGame(timestamp) {
   animationFrame = null;
   if (state.screen !== 'game') return;
-  if (state.room?.status === 'playing') render();
+  if (state.room?.status === 'playing' && timestamp - lastRenderedAt >= renderIntervalMs) {
+    lastRenderedAt = timestamp;
+    render();
+  }
   animationFrame = requestAnimationFrame(animateGame);
 }
 function scheduleGameAnimation() {
@@ -148,15 +167,15 @@ function renderChallenges(challenges) {
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function activePlayer(room = state.room) { return room?.players?.[room.match.turnIndex] || null; }
 function canControl(room = state.room) {
-  return !!room && room.status === 'playing' && activePlayer(room)?.id === socket.id && !room.match.shotInProgress && !state.shotRequestPending && (!room.match.ballInHand || room.match.cueBallPlaced);
+  return socket.connected && !!room && room.status === 'playing' && activePlayer(room)?.id === socket.id && !room.match.shotInProgress && !state.shotRequestPending && (!room.match.ballInHand || room.match.cueBallPlaced);
 }
 function canPlaceCueBall(room = state.room) {
-  return !!room && room.status === 'playing' && room.match.ballInHand && !room.match.cueBallPlaced && !room.match.shotInProgress && activePlayer(room)?.id === socket.id && !state.shotRequestPending;
+  return socket.connected && !!room && room.status === 'playing' && room.match.ballInHand && !room.match.cueBallPlaced && !room.match.shotInProgress && activePlayer(room)?.id === socket.id && !state.shotRequestPending;
 }
 function render() {
   if (!state.room) return;
   const localTurn = activePlayer()?.id === socket.id;
-  const canAim = localTurn && state.room.status === 'playing' && !state.room.match.shotInProgress && !state.shotRequestPending;
+  const canAim = socket.connected && localTurn && state.room.status === 'playing' && !state.room.match.shotInProgress && !state.shotRequestPending;
   const elapsed = state.room.status === 'playing' ? Math.min((performance.now() - state.roomReceivedAt) / 1000, 1 / 30) : 0;
   const displayRoom = elapsed > 0 ? {
     ...state.room,
@@ -180,6 +199,8 @@ function updateControls() {
   document.getElementById('control-hint').classList.toggle('invalid', !!invalidAim);
   document.getElementById('control-hint').textContent = placingCue
     ? 'Foul penalty: drag the cue ball to an open spot, then take your shot.'
+    : !socket.connected
+      ? 'Connection lost — reconnecting. Shots will not be queued.'
     : enabled
       ? invalidAim ? 'Wrong ball. Aim for your group.' : state.room.mode === 'challenge' ? `Pocket ball #${state.room.challenge.targetNumber} in the marked pocket. ${state.room.challenge.shotsRemaining} shots left.` : 'Drag on the table to aim. Set power separately; release never shoots. Tap Shoot to strike.'
     : state.room?.status === 'paused' ? 'Match paused while a player reconnects.'
@@ -210,7 +231,7 @@ function updateHud() {
   const current = activePlayer();
   document.getElementById('turn-label').textContent = current ? `${current.name}${current.id === socket.id ? ' · Your turn' : current.computer ? ' · Thinking' : ''}` : 'Waiting';
   document.getElementById('status-label').textContent = state.room.status === 'paused' ? 'Paused' : (match.message || 'Ready');
-  document.getElementById('connection-label').innerHTML = state.room.mode === 'challenge' ? '<i></i> Solo challenge' : players.some(p => p.computer) ? '<i></i> Computer ready' : players.length < 2 ? '<i class="offline"></i> Waiting for opponent' : players.every(p => p.connected) ? '<i></i> Both connected' : '<i class="offline"></i> Reconnecting';
+  document.getElementById('connection-label').innerHTML = !socket.connected ? '<i class="offline"></i> Reconnecting' : state.room.mode === 'challenge' ? '<i></i> Solo challenge' : players.some(p => p.computer) ? '<i></i> Computer ready' : players.length < 2 ? '<i class="offline"></i> Waiting for opponent' : players.every(p => p.connected) ? '<i></i> Both connected' : '<i class="offline"></i> Reconnecting';
   for (let i = 0; i < 2; i += 1) {
     const p = players[i]; const card = document.getElementById(`player-card-${i}`);
     card.classList.toggle('current', !!p && i === match.turnIndex);
@@ -281,12 +302,11 @@ function setAim(event) {
   if (Math.hypot(dx, dy) < 3) return;
   const power = state.aim?.power ?? .42;
   state.aim = { angle: Math.atan2(dy, dx), power };
-  render(); updateControls();
+  updateControls();
 }
 function setCuePlacement(event) {
   if (!canPlaceCueBall()) return;
   state.cuePlacement = getPointerWorld(event);
-  render();
 }
 function setPower(value) {
   if (!canControl()) return;
@@ -296,9 +316,15 @@ function setPower(value) {
   render(); updateControls();
 }
 function shoot() {
-  if (!canControl() || !state.aim || !renderer.canShoot(state.room, state.aim.angle)) return;
+  if (!socket.connected || !canControl() || !state.aim || !renderer.canShoot(state.room, state.aim.angle)) return;
   state.shotRequestPending = true;
   updateControls();
+  clearShotResponseTimer();
+  shotResponseTimer = window.setTimeout(() => {
+    state.shotRequestPending = false;
+    updateControls();
+    showAppDialog({ title: 'Shot response delayed', message: 'The server did not confirm this shot. Check your connection before trying again.' });
+  }, 2500);
   socket.emit('shoot_ball', { code: state.room.code, angle: state.aim.angle, power: state.aim.power });
 }
 function cancelCharge() {
@@ -397,7 +423,15 @@ document.getElementById('host-btn').addEventListener('click', () => { state.loca
 document.getElementById('join-btn').addEventListener('click', () => { state.localName = document.getElementById('join-name').value.trim() || 'Guest Player'; socket.emit('join_room', { code: document.getElementById('room-code').value.trim().toUpperCase(), playerName: state.localName }); });
 document.getElementById('start-match-btn').addEventListener('click', () => { if (state.room) socket.emit('start_match', { code: state.room.code }); });
 
-socket.on('connect', () => { state.myPlayerId = socket.id; updateLobby(); });
+socket.on('connect', () => {
+  state.myPlayerId = socket.id;
+  updateLobby(); updateHud(); updateControls();
+});
+socket.on('disconnect', () => {
+  clearShotResponseTimer();
+  state.shotRequestPending = false; state.aim = null; state.cuePlacement = null;
+  updateHud(); updateControls();
+});
 socket.on('challenge_list', renderChallenges);
 socket.on('connect', () => {
   try {
@@ -406,6 +440,7 @@ socket.on('connect', () => {
   } catch { localStorage.removeItem('pool-session'); }
 });
 socket.on('room_joined', ({ room, sessionToken }) => {
+  clearShotResponseTimer();
   state.myPlayerId = socket.id; state.room = room; state.aim = null; state.shotRequestPending = false;
   state.roomReceivedAt = performance.now();
   state.timerSnapshotMs = room.match.timer?.remainingMs ?? 30_000; state.timerSnapshotAt = performance.now();
@@ -422,12 +457,18 @@ socket.on('session_token', ({ code, token }) => localStorage.setItem('pool-sessi
 socket.on('resume_error', () => localStorage.removeItem('pool-session'));
 socket.on('shot_started', shot => {
   if (!state.room || shot.code !== state.room.code) return;
+  clearShotResponseTimer();
   const key = `${shot.code}:${shot.shotId}`;
   if (state.playedShots.has(key)) return;
   state.playedShots.add(key); state.aim = null; state.shotRequestPending = true;
   renderer.playCueStrike(shot); playSound('cue', .42); render(); updateControls();
 });
 socket.on('state_update', room => {
+  const previousRoom = state.room?.code === room.code ? state.room : null;
+  const shotWasInProgress = !!previousRoom?.match.shotInProgress;
+  const previousShotCount = state.room?.code === room.code ? state.room.match.shotCount : room.match.shotCount;
+  const shotWasAccepted = room.match.shotCount > previousShotCount;
+  if (room.match.shotInProgress || shotWasAccepted || shotWasInProgress) clearShotResponseTimer();
   const challengeJustFinished = room.mode === 'challenge' && room.status === 'finished' && state.room?.status !== 'finished';
   detectImpacts(state.room, room);
   detectNewPockets(room); state.room = room;
@@ -439,9 +480,15 @@ socket.on('state_update', room => {
     state.cuePlacement = null;
   }
   if (room.match.shotInProgress) { state.aim = null; state.shotRequestPending = true; }
-  else {
+  else if (shotWasAccepted || shotWasInProgress) {
     state.shotRequestPending = false;
     if (room.status === 'playing' && localTurn && (!room.match.ballInHand || room.match.cueBallPlaced) && !state.aim) state.aim = { angle: 0, power: .42 };
+    if (!localTurn || room.status !== 'playing') state.aim = null;
+  }
+  else {
+    if (!state.shotRequestPending) {
+      if (room.status === 'playing' && localTurn && (!room.match.ballInHand || room.match.cueBallPlaced) && !state.aim) state.aim = { angle: 0, power: .42 };
+    }
     if (!localTurn || room.status !== 'playing') state.aim = null;
   }
   updateLobby(); updateHud(); updateControls();
@@ -450,8 +497,8 @@ socket.on('state_update', room => {
   render();
   if (challengeJustFinished) showChallengeResult(room);
 });
-socket.on('room_error', message => showAppDialog({ title: 'Room update', message }));
-socket.on('state_error', message => { state.shotRequestPending = false; updateControls(); showAppDialog({ title: 'Shot unavailable', message }); });
+socket.on('room_error', message => { clearShotResponseTimer(); state.shotRequestPending = false; updateControls(); showAppDialog({ title: 'Room update', message }); });
+socket.on('state_error', message => { clearShotResponseTimer(); state.shotRequestPending = false; updateControls(); showAppDialog({ title: 'Shot unavailable', message }); });
 window.addEventListener('resize', () => { renderer.resize(); render(); });
 window.addEventListener('orientationchange', () => requestAnimationFrame(() => { renderer.resize(); render(); }));
 window.setInterval(updateTimerHud, 100);
